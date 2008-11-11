@@ -13,40 +13,39 @@ window.onload = function(){
 	}
 	
 	var phpScripts = importPHPScripts();
-	
-	var phypeScripts = [];
-	for (var i=0; i<phpScripts.length; i++) {
-		phypeScripts[phypeScripts.length] = eval(ajax.gets('src/phpToJSON.php?file='+phpScripts[i]));
-	}
-	
-	// Interpret, execute, and output
-	var phpOutput = '';
-	for (var i=0; i<phypeScripts.length; i++) {
-		phpOutput += interpret(phypeScripts[i]);
-	}
-	document.body.innerHTML = phpOutput;
+
+	document.body.innerHTML = interpreter.interpret(phpScripts);
 }
 
-/**
- * Interprets an array of JSON-objects with parsekit formatted opcodes.
- * 
- * @param {Array} phypeCodes An array of JSON-objects with parsekit formatted opcodes.
- */
-function interpret(phypeCodes) {
-	var output = '';
-	// Iterate through op array without iterating through function- and class-table.
-	for (var i=0; i<phypeCodes.length-2; i++) {
-		var op = phypeCodes.i;
-
-		switch(op.code) {
-			case 'ZEND_ECHO':
-				output += op.arg2;
-			case 'ZEND_ASSIGN':
-				eval(parser.parseVar(op.arg1)+' = ');
-		}
-	}
+var interpreter = {
+	currentScript : '',
+	curOp : 0,
 	
-	return output;
+	/**
+	 * Interprets an array of JSON-objects with parsekit formatted opcodes.
+	 * 
+	 * @param {Array} phypeCodes An array of JSON-objects with parsekit formatted opcodes.
+	 */
+	interpret : function(phpScripts) {
+		var output = '';
+		for (var i=0; i<phpScripts.length; i++) {
+			interpreter.currentScript = phpScripts[i]
+			var phypeCodes = eval(ajax.gets('src/phpToJSON.php?file='+phpScripts[i]));
+			str = "function_table";
+
+			// Iterate through op array without iterating through function- and class-table.
+			while (phypeCodes[interpreter.curOp] && phypeCodes[interpreter.curOp] != 'undefined') {
+				var op = parser.parse(phypeCodes[interpreter.curOp]);
+
+				output += eval(op.code+'("'+op.arg1+'", "'+op.arg2+'", "'+op.arg3+'")');
+				alert(op.code+'("'+op.arg1+'", "'+op.arg2+'", "'+op.arg3+'")');
+				
+				interpreter.curOp++;
+			}
+		}
+		
+		return output;
+	}
 }
 
 /***********
@@ -64,7 +63,7 @@ var parser = {
 	 */
 	parse : function(phypeCode) {
 		var json = {};
-		
+
 		var firstSpace = phypeCode.indexOf(' ');
 		json.code = phypeCode.substring(0,firstSpace);
 		
