@@ -10,6 +10,9 @@ var ARGT_NUM = 4;
 var ARGT_HEX = 5;
 var ARGT_OPADDR = 6;
 
+/////////////
+// OPCODES //
+/////////////
 function ZEND_ASSIGN(arg1,arg2,arg3) {
 	linker.assign(arg1.value,arg3.value);
 
