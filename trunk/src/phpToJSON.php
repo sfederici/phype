@@ -57,6 +57,7 @@ $f = fopen($tmpName, 'w');
 fwrite($f,$fileContents);
 $json = json_encode(parsekit_compile_file($tmpName, $errors, PARSEKIT_SIMPLE));
 fclose($f);
+unlink($tmpName);
 
 // Output
 if (!$json || $json=='false' || $file=='')
