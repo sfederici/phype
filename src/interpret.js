@@ -1,4 +1,3 @@
-var phypeScripts = [];
 window.onload = function(){
 	// Import and compile PHP scripts
 	function importPHPScripts() {
@@ -15,6 +14,7 @@ window.onload = function(){
 	
 	var phpScripts = importPHPScripts();
 	
+	var phypeScripts = [];
 	for (var i=0; i<phpScripts.length; i++) {
 		phypeScripts[phypeScripts.length] = eval(ajax.gets('src/phpToJSON.php?file='+phpScripts[i]));
 	}
