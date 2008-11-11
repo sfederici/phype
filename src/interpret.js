@@ -1,6 +1,6 @@
 window.onload = function(){
-	// Import and compile PHP scripts
-	function importPHPScripts() {
+	// Load and compile PHP scripts
+	function loadPHPScripts() {
 		var phpScripts = [];
 		var scripts = document.getElementsByTagName('script');
 		for (var i=0; i<scripts.length; i++) {
@@ -12,7 +12,7 @@ window.onload = function(){
 		return phpScripts;
 	}
 	
-	var phpScripts = importPHPScripts();
+	var phpScripts = loadPHPScripts();
 
 	document.body.innerHTML = interpreter.interpret(phpScripts);
 }
