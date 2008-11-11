@@ -31,12 +31,19 @@ window.onload = function(){
  * @param {Array} phypeCodes An array of JSON-objects with parsekit formatted opcodes.
  */
 function interpret(phypeCodes) {
+	var output = '';
 	for (index in phypeCodes) {
 		if (index != 'function_table' && index != 'class_table') {
 			var op = opcodeParser.parse(phypeCodes[index]);
-			alert('code: '+op.code+', arg1: '+op.arg1+', arg2: '+op.arg2+', arg3: '+op.arg3);
+
+			switch(op.code) {
+				case 'ZEND_ECHO':
+					output += op.arg2;
+			}
 		}
 	}
+	
+	return output;
 }
 
 /***********
@@ -75,7 +82,7 @@ var opcodeParser = {
 	
 	fixString : function(str) {
 		if (str.indexOf('\'')==0 && str.length > 19)
-			str = str.substring(0, str.length-4)+'\'';
+			str = str.substring(1, str.length-4);
 		
 		return str;
 	}
