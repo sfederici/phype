@@ -1,23 +1,25 @@
-function importPHPScripts() {
-	var phpScripts = [];
-	var scripts = document.getElementsByTagName('script');
-	for (var i=0; i<scripts.length; i++) {
-		if (scripts[i].type == 'text/php') {
-			phpScripts[phpScripts.length] = scripts[i].src;
-		}
-	}
-	
-	return phpScripts;
-}
-
-var phpScripts = importPHPScripts();
-
 var phypeScripts = [];
 window.onload = function(){
+	// Import and compile PHP scripts
+	function importPHPScripts() {
+		var phpScripts = [];
+		var scripts = document.getElementsByTagName('script');
+		for (var i=0; i<scripts.length; i++) {
+			if (scripts[i].type == 'text/php') {
+				phpScripts[phpScripts.length] = scripts[i].src;
+			}
+		}
+		
+		return phpScripts;
+	}
+	
+	var phpScripts = importPHPScripts();
+	
 	for (var i=0; i<phpScripts.length; i++) {
 		phypeScripts[phypeScripts.length] = eval(ajax.gets('src/phpToJSON.php?file='+phpScripts[i]));
 	}
 	
+	// Interpret, execute, and output
 	var phpOutput = '';
 	for (var i=0; i<phypeScripts.length; i++) {
 		phpOutput += interpret(phypeScripts[i]);
@@ -32,14 +34,15 @@ window.onload = function(){
  */
 function interpret(phypeCodes) {
 	var output = '';
-	for (index in phypeCodes) {
-		if (index != 'function_table' && index != 'class_table') {
-			var op = opcodeParser.parse(phypeCodes[index]);
+	// Iterate through op array without iterating through function- and class-table.
+	for (var i=0; i<phypeCodes.length-2; i++) {
+		var op = phypeCodes.i;
 
-			switch(op.code) {
-				case 'ZEND_ECHO':
-					output += op.arg2;
-			}
+		switch(op.code) {
+			case 'ZEND_ECHO':
+				output += op.arg2;
+			case 'ZEND_ASSIGN':
+				eval(parser.parseVar(op.arg1)+' = ');
 		}
 	}
 	
@@ -49,7 +52,7 @@ function interpret(phypeCodes) {
 /***********
  * HELPERS *
  ***********/
-var opcodeParser = {
+var parser = {
 	/**
 	 * Takes a parsekit formatted opcode string and parses it into a JSON object with the properties:
 	 *  - command: The name of the opcode.
@@ -66,33 +69,52 @@ var opcodeParser = {
 		json.code = phypeCode.substring(0,firstSpace);
 		
 		var argStr = phypeCode.substring(firstSpace,phypeCode.length);
-		json.arg1 = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+|0x[a-fA-F0-9]+)/)[0];
-		json.arg1 = opcodeParser.fixString(json.arg1);
+		json.arg1 = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+|0x[a-fA-F0-9]+|#[0-9]+)/)[0];
+		json.arg1 = parser.parseString(json.arg1);
 		
 		argStr = argStr.substring(json.arg1.length,argStr.length);
-		json.arg2 = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+|0x[a-fA-F0-9]+)/)[0];
-		json.arg2 = opcodeParser.fixString(json.arg2);
+		json.arg2 = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+|0x[a-fA-F0-9]+|#[0-9]+)/)[0];
+		json.arg2 = parser.parseString(json.arg2);
 		
 		argStr = argStr.substring(json.arg2.length,argStr.length);
-		json.arg3 = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+|0x[a-fA-F0-9]+)/)[0];
-		json.arg3 = opcodeParser.fixString(json.arg3);
+		json.arg3 = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+|0x[a-fA-F0-9]+|#[0-9]+)/)[0];
+		json.arg3 = parser.parseString(json.arg3);
 		
 		return json;
 	},
 	
-	fixString : function(str) {
+	/**
+	 * Removes pings from strings and removes the annoying three dots added to strings over 16 chars.
+	 */
+	parseString : function(str) {
 		if (str.indexOf('\'')==0 && str.length > 19)
 			str = str.substring(1, str.length-4);
 		
 		return str;
+	},
+	
+	/**
+	 * Converts variable reference-numbers from "T(xx)" to simply "xx".
+	 */
+	parseVar : function(str) {
+		var num = str.match(/[0-9]+/);
+		
+		return num;
+	},
+	
+	/**
+	 * 
+	 */
+	generateSymTable : function(str) {
+		// Strip all white-space.
+		var str = str.replace(/\s*|\n*|\f*|\r*|\t*|\v*/,'');
+		
+		// Find all assignments
+		var assigns = str.match(/$[a-zA-Z0-9_]=[^;]+;/);
+		for (var i=0; i<assigns.length; i++) {
+			
+		}
 	}
 }
 
-/*********
- * UTILS *
- *********/
-var ajax={};
-ajax.x=function(){try{return new ActiveXObject('Msxml2.XMLHTTP')}catch(e){try{return new ActiveXObject('Microsoft.XMLHTTP')}catch(e){return new XMLHttpRequest()}}};
-ajax.send=function(u,f,m,a){var x=ajax.x();x.open(m,u,true);x.onreadystatechange=function(){if(x.readyState==4)f(x.responseText)};if(m=='POST')x.setRequestHeader('Content-type','application/x-www-form-urlencoded');x.send(a)};
-ajax.gets=function(url){var x=ajax.x();x.open('GET',url,false);x.send(null);return x.responseText};
-ajax.get=function(url,func){ajax.send(url,func,'GET')};
+var symTables = {};
