@@ -18,7 +18,7 @@ window.onload = function(){
 }
 
 var interpreter = {
-	currentScript : '',
+	curScript : '',
 	curOp : 0,
 	
 	/**
@@ -29,17 +29,23 @@ var interpreter = {
 	interpret : function(phpScripts) {
 		var output = '';
 		for (var i=0; i<phpScripts.length; i++) {
-			interpreter.currentScript = phpScripts[i]
+			// Set the current executing script and add it to the symbol table.
+			interpreter.curScript = phpScripts[i];
+			symTables[phpScripts[i]] = {};
+			
+			// Link the variable references in the script to the global variables.
+			var phpCode = ajax.gets(phpScripts[i]);
+			linker.linkGlobals(phpCode);
+			
+			// Extract parsekit formatted opcodes.
 			var phypeCodes = eval(ajax.gets('src/phpToJSON.php?file='+phpScripts[i]));
-			str = "function_table";
-
-			// Iterate through op array without iterating through function- and class-table.
+			
+			// Iterate through op array.
 			while (phypeCodes[interpreter.curOp] && phypeCodes[interpreter.curOp] != 'undefined') {
 				var op = parser.parse(phypeCodes[interpreter.curOp]);
 
-				output += eval(op.code+'("'+op.arg1+'", "'+op.arg2+'", "'+op.arg3+'")');
-				alert(op.code+'("'+op.arg1+'", "'+op.arg2+'", "'+op.arg3+'")');
-				
+				output += eval(op.code+'(op.arg1, op.arg2, op.arg3);');
+
 				interpreter.curOp++;
 			}
 		}
@@ -48,9 +54,10 @@ var interpreter = {
 	}
 }
 
-/***********
- * HELPERS *
- ***********/
+/////////////
+// HELPERS //
+/////////////
+
 var parser = {
 	/**
 	 * Takes a parsekit formatted opcode string and parses it into a JSON object with the properties:
@@ -62,22 +69,26 @@ var parser = {
 	 * @param {String} phypeCode The opcode string to parse.
 	 */
 	parse : function(phypeCode) {
-		var json = {};
-
+		var json = {code:'',arg1:{value:'',type:null},arg2:{value:'',type:null},arg3:{value:'',type:null}};
+		
+		var lastMatched = '';
 		var firstSpace = phypeCode.indexOf(' ');
 		json.code = phypeCode.substring(0,firstSpace);
 		
 		var argStr = phypeCode.substring(firstSpace,phypeCode.length);
-		json.arg1 = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+|0x[a-fA-F0-9]+|#[0-9]+)/)[0];
-		json.arg1 = parser.parseString(json.arg1);
+		json.arg1.value = lastMatched = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+(\.[0-9]+)*|0x[a-fA-F0-9]+|#[0-9]+)/)[0];
+		json.arg1.type = parser.getType(json.arg1.value);
+		json.arg1.value = parser.getValue(json.arg1.value);
 		
-		argStr = argStr.substring(json.arg1.length,argStr.length);
-		json.arg2 = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+|0x[a-fA-F0-9]+|#[0-9]+)/)[0];
-		json.arg2 = parser.parseString(json.arg2);
-		
-		argStr = argStr.substring(json.arg2.length,argStr.length);
-		json.arg3 = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+|0x[a-fA-F0-9]+|#[0-9]+)/)[0];
-		json.arg3 = parser.parseString(json.arg3);
+		argStr = argStr.substring(lastMatched.length+1,argStr.length);
+		json.arg2.value = lastMatched = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+(\.[0-9]+)*|0x[a-fA-F0-9]+|#[0-9]+)/)[0];
+		json.arg2.type = parser.getType(json.arg2.value);
+		json.arg2.value = parser.getValue(json.arg2.value);
+
+		argStr = argStr.substring(lastMatched.length+1,argStr.length);
+		json.arg3.value = argStr.match(/('[^']*'|UNUSED|NULL|T\([0-9]+\)|[0-9]+(\.[0-9]+)*|0x[a-fA-F0-9]+|#[0-9]+)/)[0];
+		json.arg3.type = parser.getType(json.arg3.value);
+		json.arg3.value = parser.getValue(json.arg3.value);
 		
 		return json;
 	},
@@ -89,31 +100,86 @@ var parser = {
 		if (str.indexOf('\'')==0 && str.length > 19)
 			str = str.substring(1, str.length-4);
 		
-		return str;
+		return str.substring(1,str.length-1);
 	},
 	
 	/**
 	 * Converts variable reference-numbers from "T(xx)" to simply "xx".
 	 */
-	parseVar : function(str) {
+	parseGetNum : function(str) {
 		var num = str.match(/[0-9]+/);
 		
 		return num;
 	},
 	
 	/**
-	 * 
+	 * Get the type of an argument.
 	 */
-	generateSymTable : function(str) {
+	getType : function(arg) {
+		if (/UNUSED/.test(arg))
+			return ARGT_UNUSED;
+		if (/'[^']*'/.test(arg))
+			return ARGT_STRING;
+		if (/NULL/.test(arg))
+			return ARGT_NULL;
+		if (/T\([0-9]+\)/.test(arg))
+			return ARGT_VAR;
+		if (/[0-9]+(\.[0-9]+)*/.test(arg))
+			return ARGT_NUM;
+		if (/0x[a-fA-F0-9]+/.test(arg))
+			return ARGT_HEX;
+		if (/#[0-9]+/.test(arg))
+			return ARGT_OPADDR;
+		return ARGT_UNKNOWN;
+	},
+	
+	/**
+	 * Get the value of an argument (removes bogus chars added by parsekit).
+	 */
+	getValue : function(arg) {
+		switch(parser.getType(arg)) {
+			case ARGT_STRING:
+				return parser.parseString(arg);
+			case ARGT_VAR:
+			case ARGT_OPADDR:
+				return parser.parseGetNum(arg);
+			case ARGT_NULL:
+			case ARGT_NUM:
+			case ARGT_HEX:
+			case ARGT_UNUSED:
+			case ARGT_UNKNOWN:
+				return arg;
+		}
+	}
+}
+
+var linker = {
+	assign : function(hash, value) {
+		globals[symTables[interpreter.curScript][hash]] = value;
+	},
+	
+	getValue : function(hash) {
+		return globals[symTables[interpreter.curScript][hash]];
+	},
+	
+	/**
+	 * Links variable references to global variables.
+	 * 
+	 * @param {String} str The original PHP script.
+	 */
+	linkGlobals : function(str) {
 		// Strip all white-space.
 		var str = str.replace(/\s*|\n*|\f*|\r*|\t*|\v*/,'');
 		
 		// Find all assignments
 		var assigns = str.match(/$[a-zA-Z0-9_]=[^;]+;/);
-		for (var i=0; i<assigns.length; i++) {
-			
-		}
+		if (assigns!=null)
+			for (var i=0; i<assigns.length; i++) {
+				symTables[interpreter.curScript][i] = assigns[i];
+				globals[assigns[i]] = null;
+			}
 	}
 }
 
 var symTables = {};
+var globals = {};
