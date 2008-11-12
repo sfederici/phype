@@ -10,7 +10,7 @@ function importScript(scriptName) {
 	head.appendChild(script);
 }
 
+if (debugOn) importScript('src/debug.js');
 importScript('src/utils.js');
 importScript('src/ops.js');
 importScript('src/interpret.js');
-if (debugOn) importScript('src/debug.js');
