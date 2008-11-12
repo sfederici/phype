@@ -1,0 +1,8 @@
+<?
+// OUTPUT: ":D".
+$a = 'b';
+$b = 'c';
+$c = 'Silly';
+$Silly = ':D';
+echo $$$$a;
+?>
