@@ -24,11 +24,18 @@ function ZEND_ECHO(arg1,arg2,arg3) {
 		case ARGT_STRING:
 			return arg2.value;
 		case ARGT_VAR:
-			//alert('read: '+arg2.value+' - '+linker.getValue(arg2.value));
 			return linker.getValue(arg2.value);
 		default:
 			return 'ECHO: Unknown operand type: "'+arg2.type+'".<br/>';
 	}
+}
+
+function ZEND_FETCH_R(arg1,arg2,arg3) {
+	var varName = linker.getValue(arg2.value);
+	linker.linkGlobal(arg1.value, varName);
+	var_log(globals);
+	
+	return '';
 }
 
 function ZEND_HANDLE_EXCEPTION(arg1,arg2,arg3) {
