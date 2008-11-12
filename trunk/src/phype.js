@@ -13,3 +13,4 @@ function importScript(scriptName) {
 importScript('src/utils.js');
 importScript('src/ops.js');
 importScript('src/interpret.js');
+if (debugOn) importScript('src/debug.js');

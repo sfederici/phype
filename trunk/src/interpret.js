@@ -162,6 +162,12 @@ var linker = {
 		return globals[symTables[interpreter.curScript][hash]];
 	},
 	
+	linkGlobal : function(hash, global) {
+		symTables[interpreter.curScript][hash] = global;
+		if (!globals[global])
+			globals[global] = null;
+	},
+	
 	/**
 	 * Links variable references to global variables.
 	 * 
@@ -169,15 +175,20 @@ var linker = {
 	 */
 	linkGlobals : function(str) {
 		// Strip all white-space.
-		var str = str.replace(/\s*|\n*|\f*|\r*|\t*|\v*/,'');
+		var str = str.replace(/\s+/g,'');
 		
 		// Find all assignments
-		var assigns = str.match(/$[a-zA-Z0-9_]=[^;]+;/);
-		if (assigns!=null)
+		var assigns = str.match(/\$[a-zA-Z0-9_]+=[^;]+;/g);
+		var_log(assigns);
+		if (assigns!=null) {
 			for (var i=0; i<assigns.length; i++) {
-				symTables[interpreter.curScript][i] = assigns[i];
-				globals[assigns[i]] = null;
+				var varName = assigns[i].match(/[a-zA-Z0-9_]+=/)[0];
+				varName = varName.substring(0,varName.length-1);
+				symTables[interpreter.curScript][i] = varName;
+				globals[varName] = null;
+				var_log(varName);
 			}
+		}
 	}
 }
 
