@@ -65,7 +65,7 @@ function var_dump(data,addwhitespace,safety,level) {
 
 function log(message) {
 	if (!log.window_ || log.window_.closed) {
-		var win = window.open("", null, "width=400,height=200," +
+		var win = window.open("", null, "width=600,height=400," +
 							"scrollbars=yes,resizable=yes,status=no," +
 							"location=no,menubar=no,toolbar=no");
 		if (!win) return;
