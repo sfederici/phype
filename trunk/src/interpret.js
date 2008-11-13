@@ -59,7 +59,7 @@ var interpreter = {
 				!interpreter.termEventReceived) {
 			var op = parser.parse(phypeCodes[interpreter.curOp]);
 
-			log(interpreter.curOp+';'+op.code+'('+op.arg1.value+', '+op.arg2.value+', '+op.arg3.value+');');
+			//log(interpreter.curOp+';'+op.code+'('+op.arg1.value+', '+op.arg2.value+', '+op.arg3.value+');');
 			output += eval(op.code+'(op.arg1, op.arg2, op.arg3);');
 		}
 		
