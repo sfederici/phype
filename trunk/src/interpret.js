@@ -14,19 +14,21 @@ window.onload = function(){
 	
 	var phpScripts = loadPHPScripts();
 
-	document.body.innerHTML = interpreter.interpret(phpScripts);
+	document.body.innerHTML = interpreter.interpretPHP(phpScripts);
 }
 
 var interpreter = {
 	curScript : '',
+	curFun : '.global',
 	curOp : 0,
+	termEventReceived : false,
 	
 	/**
 	 * Interprets an array of JSON-objects with parsekit formatted opcodes.
 	 * 
 	 * @param {Array} phypeCodes An array of JSON-objects with parsekit formatted opcodes.
 	 */
-	interpret : function(phpScripts) {
+	interpretPHP : function(phpScripts) {
 		var output = '';
 		for (var i=0; i<phpScripts.length; i++) {
 			// Set the current executing script and add it to the symbol table.
@@ -36,21 +38,38 @@ var interpreter = {
 			// Link the variable references in the script to the global variables.
 			var phpCode = ajax.gets(phpScripts[i]);
 			linker.linkGlobals(phpCode);
-			
+
 			// Extract parsekit formatted opcodes.
 			var phypeCodes = eval(ajax.gets('src/phpToJSON.php?file='+phpScripts[i]));
 			
-			// Iterate through op array.
-			while (phypeCodes[interpreter.curOp] && phypeCodes[interpreter.curOp] != 'undefined') {
-				var op = parser.parse(phypeCodes[interpreter.curOp]);
-
-				output += eval(op.code+'(op.arg1, op.arg2, op.arg3);');
-
-				interpreter.curOp++;
-			}
+			// Store function table
+			funTable = phypeCodes.function_table;
+			
+			output += interpreter.interpret(phypeCodes);
 		}
 		
 		return output;
+	},
+	
+	interpret : function(phypeCodes) {
+		var output = '';
+		// Iterate through op array.
+		while (phypeCodes[interpreter.curOp] &&
+				phypeCodes[interpreter.curOp] != 'undefined' &&
+				!interpreter.termEventReceived) {
+			var op = parser.parse(phypeCodes[interpreter.curOp]);
+
+			log(interpreter.curOp+';'+op.code+'('+op.arg1.value+', '+op.arg2.value+', '+op.arg3.value+');');
+			output += eval(op.code+'(op.arg1, op.arg2, op.arg3);');
+		}
+		
+		interpreter.termEventReceived = false;
+		
+		return output;
+	}, 
+	
+	terminate : function() {
+		interpreter.termEventReceived = true;
 	}
 }
 
@@ -94,11 +113,22 @@ var parser = {
 	},
 	
 	/**
+	 * Insert the annoying three dots added to strings over 16 chars by parsekit.
+	 */
+	fakeString : function(str) {
+		var dots = '';
+		if (str.length > 16)
+			dots = '...'; 
+		
+		return '\''+str+dots+'\'';
+	},
+	
+	/**
 	 * Removes pings from strings and removes the annoying three dots added to strings over 16 chars.
 	 */
 	parseString : function(str) {
 		if (str.indexOf('\'')==0 && str.length > 19)
-			str = str.substring(1, str.length-4);
+			str = str.substring(0, str.length-3);
 		
 		return str.substring(1,str.length-1);
 	},
@@ -108,8 +138,8 @@ var parser = {
 	 */
 	parseGetNum : function(str) {
 		var num = str.match(/[0-9]+/);
-		
-		return num;
+
+		return num[0];
 	},
 	
 	/**
@@ -124,12 +154,12 @@ var parser = {
 			return ARGT_NULL;
 		if (/T\([0-9]+\)/.test(arg))
 			return ARGT_VAR;
+		if (/#[0-9]+/.test(arg))
+			return ARGT_OPADDR;
 		if (/[0-9]+(\.[0-9]+)*/.test(arg))
 			return ARGT_NUM;
 		if (/0x[a-fA-F0-9]+/.test(arg))
 			return ARGT_HEX;
-		if (/#[0-9]+/.test(arg))
-			return ARGT_OPADDR;
 		return ARGT_UNKNOWN;
 	},
 	
@@ -150,6 +180,21 @@ var parser = {
 			case ARGT_UNKNOWN:
 				return arg;
 		}
+	},
+	
+	/**
+	 * Trims white-space and echo's.
+	 */
+	trim : function(str) {
+		// Strip white-space and echo's.
+		return str.replace(/\s+|echo/g,'');
+	},
+	
+	/**
+	 * Returns true if the string is a function call.
+	 */
+	isFunCall : function(str) {
+		return /[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\([^\)]*\);/.test(str);
 	}
 }
 
@@ -174,19 +219,23 @@ var linker = {
 	 * @param {String} str The original PHP script.
 	 */
 	linkGlobals : function(str) {
-		// Strip all white-space.
-		var str = str.replace(/\s+/g,'');
+		str = parser.trim(str);
 		
 		// Find all assignments
-		var assigns = str.match(/\$[a-zA-Z0-9_]+=[^;]+;/g);
-		var_log(assigns);
+		var assigns = str.match(/(\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*=[^;]+;|[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\([^\)]*\);)/g);
 		if (assigns!=null) {
 			for (var i=0; i<assigns.length; i++) {
-				var varName = assigns[i].match(/[a-zA-Z0-9_]+=/)[0];
-				varName = varName.substring(0,varName.length-1);
-				symTables[interpreter.curScript][i] = varName;
-				globals[varName] = null;
-				var_log(varName);
+				// If the matched string is an assignment, link it to the appropriate global var.
+				if (!parser.isFunCall(assigns[i])) {
+					var varName = assigns[i].match(/[a-zA-Z0-9_]+=/)[0];
+					varName = varName.substring(0,varName.length-1);
+					symTables[interpreter.curScript][i] = varName;
+					globals[varName] = null;
+				} 
+				// If the matched string is a function call, link it to the most recent function return value.
+				else {
+					symTables[interpreter.curScript][i] = '.return';
+				}
 			}
 		}
 	}
@@ -194,3 +243,4 @@ var linker = {
 
 var symTables = {};
 var globals = {};
+var funTable = {};
