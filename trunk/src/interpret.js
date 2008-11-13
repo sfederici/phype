@@ -14,7 +14,7 @@ window.onload = function(){
 	
 	var phpScripts = loadPHPScripts();
 
-	document.body.innerHTML = interpreter.interpretPHP(phpScripts);
+	interpreter.interpretPHP(phpScripts);
 }
 
 var interpreter = {
@@ -45,14 +45,11 @@ var interpreter = {
 			// Store function table
 			funTable = phypeCodes.function_table;
 			
-			output += interpreter.interpret(phypeCodes);
+			interpreter.interpret(phypeCodes);
 		}
-		
-		return output;
 	},
 	
 	interpret : function(phypeCodes) {
-		var output = '';
 		// Iterate through op array.
 		while (phypeCodes[interpreter.curOp] &&
 				phypeCodes[interpreter.curOp] != 'undefined' &&
@@ -60,12 +57,10 @@ var interpreter = {
 			var op = parser.parse(phypeCodes[interpreter.curOp]);
 
 			//log(interpreter.curOp+';'+op.code+'('+op.arg1.value+', '+op.arg2.value+', '+op.arg3.value+');');
-			output += eval(op.code+'(op.arg1, op.arg2, op.arg3);');
+			eval(op.code+'(op.arg1, op.arg2, op.arg3);');
 		}
 		
 		interpreter.termEventReceived = false;
-		
-		return output;
 	}, 
 	
 	terminate : function() {
