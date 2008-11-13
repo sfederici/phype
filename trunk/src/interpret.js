@@ -33,11 +33,10 @@ var interpreter = {
 		for (var i=0; i<phpScripts.length; i++) {
 			// Set the current executing script and add it to the symbol table.
 			interpreter.curScript = phpScripts[i];
-			symTables[phpScripts[i]] = {};
 			
 			// Link the variable references in the script to the global variables.
 			var phpCode = ajax.gets(phpScripts[i]);
-			linker.linkGlobals(phpCode);
+			linker.linkVars(phpCode);
 
 			// Extract parsekit formatted opcodes.
 			var phypeCodes = eval(ajax.gets('src/phpToJSON.php?file='+phpScripts[i]));
@@ -194,18 +193,40 @@ var parser = {
 }
 
 var linker = {
-	assign : function(hash, value) {
-		globals[symTables[interpreter.curScript][hash]] = value;
+	assignHash : function(hash, value, scope) {
+		if (!scope)
+			scope = interpreter.curFun;
+			
+		if (!symTables[scope])
+			symTables[scope] = {};
+		
+		valTables[scope][symTables[scope][hash]] = value;
+	},
+	
+	assignVar : function(varName, value, scope) {
+		if (!valTables[scope])
+			valTables[scope] = {};
+			
+		valTables[scope][varName] = value;
 	},
 	
 	getValue : function(hash) {
-		return globals[symTables[interpreter.curScript][hash]];
+		if (symTables[interpreter.curFun] && symTables[interpreter.curFun][hash])
+			return valTables[interpreter.curFun][symTables[interpreter.curFun][hash]];
+
+		return valTables['.global'][symTables['.global'][hash]];
 	},
 	
-	linkGlobal : function(hash, global) {
-		symTables[interpreter.curScript][hash] = global;
-		if (!globals[global])
-			globals[global] = null;
+	linkVar : function(hash, varName, scope) {
+		if (!scope)
+			scope = interpreter.curFun;
+		
+		if (!symTables[scope])
+			symTables[scope] = {};
+		
+		symTables[scope][hash] = varName;
+		if (!valTables[scope][varName])
+			valTables[scope][varName] = null;
 	},
 	
 	/**
@@ -213,7 +234,7 @@ var linker = {
 	 * 
 	 * @param {String} str The original PHP script.
 	 */
-	linkGlobals : function(str) {
+	linkVars : function(str) {
 		str = parser.trim(str);
 		
 		// Find all assignments
@@ -224,12 +245,17 @@ var linker = {
 				if (!parser.isFunCall(assigns[i])) {
 					var varName = assigns[i].match(/[a-zA-Z0-9_]+=/)[0];
 					varName = varName.substring(0,varName.length-1);
-					symTables[interpreter.curScript][i] = varName;
-					globals[varName] = null;
+					// Make a reference to the value in the sym table
+					symTables[interpreter.curFun] = {};
+					symTables[interpreter.curFun][i] = varName;
+					
+					// Initialize the value in the val table.
+					valTables[interpreter.curFun] = {};
+					valTables[interpreter.curFun][varName] = null;
 				} 
 				// If the matched string is a function call, link it to the most recent function return value.
 				else {
-					symTables[interpreter.curScript][i] = '.return';
+					symTables[interpreter.curFun][i] = '.return';
 				}
 			}
 		}
@@ -237,5 +263,5 @@ var linker = {
 }
 
 var symTables = {};
-var globals = {};
+var valTables = {};
 var funTable = {};
