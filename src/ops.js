@@ -17,8 +17,6 @@ function ZEND_ASSIGN(arg1,arg2,arg3) {
 	linker.assign(arg1.value,arg3.value);
 	
 	interpreter.curOp++;
-
-	return '';
 }
 
 function ZEND_DO_FCALL(arg1,arg2,arg3) {
@@ -34,8 +32,6 @@ function ZEND_DO_FCALL(arg1,arg2,arg3) {
 	interpreter.curOp = 0;
 	
 	interpreter.interpret(funTable[arg2.value]);
-	
-	return '';
 }
 
 function ZEND_ECHO(arg1,arg2,arg3) {
@@ -43,11 +39,13 @@ function ZEND_ECHO(arg1,arg2,arg3) {
 	
 	switch (arg2.type) {
 		case ARGT_STRING:
-			return arg2.value;
+			echo(arg2.value);
+			break;
 		case ARGT_VAR:
-			return linker.getValue(arg2.value);
+			echo(linker.getValue(arg2.value));
+			break;
 		default:
-			return 'ECHO: Unknown operand type: "'+arg2.type+'".<br/>';
+			err('ECHO: Unknown operand type: "'+arg2.type+'".<br/>');
 	}
 }
 
@@ -56,18 +54,14 @@ function ZEND_FETCH_R(arg1,arg2,arg3) {
 	linker.linkGlobal(arg1.value, varName);
 	
 	interpreter.curOp++;
-	
-	return '';
 }
 
 function ZEND_HANDLE_EXCEPTION(arg1,arg2,arg3) {
 	interpreter.curOp++;
-	return '';
 }
 
 function ZEND_NOP(arg1,arg2,arg3) {
 	interpreter.curOp++;
-	return '';
 }
 
 function ZEND_RETURN(arg1,arg2,arg3) {
@@ -87,8 +81,6 @@ function ZEND_RETURN(arg1,arg2,arg3) {
 			return 'RETURN: Unknown operand type: "'+arg2.type+'".<br/>';
 	}
 	globals['.return'] = result;
-	
-	return '';
 }
 
 
@@ -105,8 +97,6 @@ function PHYPE_BRANCH(arg1,arg2,arg3) {
 	interpreter.curOp = arg3.value;
 	
 	interpreter.terminate();
-
-	return '';
 }
 
 function PHYPE_TERMINATE(arg1,arg2,arg3) {
@@ -115,6 +105,4 @@ function PHYPE_TERMINATE(arg1,arg2,arg3) {
 	
 	// Terminate
 	interpreter.terminate();
-	
-	return '';
 }
