@@ -180,6 +180,9 @@ var parser = {
 	 * Trims white-space and echo's.
 	 */
 	trim : function(str) {
+		// Strip all function declaration blocks.
+		str = str.replace(/function\s+[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\([^\)]*\)\s*\{([^\{\}]*|\{[^\}]*\})+\}/g,'');
+		
 		// Strip white-space and echo's.
 		return str.replace(/\s+|echo/g,'');
 	},
@@ -236,6 +239,7 @@ var linker = {
 	 */
 	linkVars : function(str) {
 		str = parser.trim(str);
+		var_log(str);
 		
 		// Find all assignments
 		var assigns = str.match(/(\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*=[^;]+;|[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\([^\)]*\);)/g);
