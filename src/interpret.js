@@ -55,7 +55,7 @@ var interpreter = {
 				!interpreter.termEventReceived) {
 			var op = parser.parse(phypeCodes[interpreter.curOp]);
 
-			//log(interpreter.curOp+';'+op.code+'('+op.arg1.value+', '+op.arg2.value+', '+op.arg3.value+');');
+			log(interpreter.curOp+';'+op.code+'('+op.arg1.value+', '+op.arg2.value+', '+op.arg3.value+');');
 			eval(op.code+'(op.arg1, op.arg2, op.arg3);');
 		}
 		
@@ -202,21 +202,33 @@ var linker = {
 			
 		if (!symTables[scope])
 			symTables[scope] = {};
+			
+		if (!valTables[scope])
+			valTables[scope] = {};
 		
-		valTables[scope][symTables[scope][hash]] = value;
+		// If our scope is not global, we disregard the var name and simply assign
+		// the hash value directly in the val table. The var is local and will not need
+		// to be referenced by its name anyway.
+		if (scope != '.global' && !symTables[scope][hash]) {
+			symTables[scope][hash] = hash;
+			valTables[scope][hash] = value;
+		} else {
+			valTables[scope][symTables[scope][hash]] = value;
+		}
 	},
 	
 	assignVar : function(varName, value, scope) {
 		if (!valTables[scope])
 			valTables[scope] = {};
-			
+		
 		valTables[scope][varName] = value;
 	},
 	
 	getValue : function(hash) {
+		var_log(valTables);
 		if (symTables[interpreter.curFun] && symTables[interpreter.curFun][hash])
 			return valTables[interpreter.curFun][symTables[interpreter.curFun][hash]];
-
+		
 		return valTables['.global'][symTables['.global'][hash]];
 	},
 	
@@ -239,7 +251,6 @@ var linker = {
 	 */
 	linkVars : function(str) {
 		str = parser.trim(str);
-		var_log(str);
 		
 		// Find all assignments
 		var assigns = str.match(/(\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*=[^;]+;|[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\([^\)]*\);)/g);
