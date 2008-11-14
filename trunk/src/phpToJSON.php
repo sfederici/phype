@@ -45,22 +45,37 @@ function indent($json) {
     return $result;
 }
 
+$json = false;
+
 // Get file-name argument
 $file = ($_GET['file'])? $_GET['file'] : '';
 
-// Read file
-$fileContents = file_get_contents($file);
+// Get script argument
+$script = ($_GET['script'])? $_GET['script'] : '';
 
-// Write contents to temporary file to allow parsekit to compile it correctly
-$tmpName = tempnam('../tmp/', '');
-$f = fopen($tmpName, 'w');
-fwrite($f,$fileContents);
-$json = json_encode(parsekit_compile_file($tmpName, $errors, PARSEKIT_SIMPLE));
-fclose($f);
-unlink($tmpName);
+if ($file) {
+	// Read file
+	$fileContents = file_get_contents($file);
+	
+	// Write contents to temporary file to allow parsekit to compile it correctly
+	$tmpName = tempnam('../tmp/', '');
+	$f = fopen($tmpName, 'w');
+	fwrite($f,$fileContents);
+	$json = json_encode(@parsekit_compile_file($tmpName, $errors, PARSEKIT_SIMPLE));
+	fclose($f);
+	unlink($tmpName);
+} else if ($script) {
+	// Write contents to temporary file to allow parsekit to compile it correctly
+	$tmpName = tempnam('../tmp/', '');
+	$f = fopen($tmpName, 'w');
+	fwrite($f,$script);
+	$json = json_encode(@parsekit_compile_file($tmpName, $errors, PARSEKIT_SIMPLE));
+	fclose($f);
+	unlink($tmpName);
+}
 
 // Output
-if (!$json || $json=='false' || $file=='')
+if (!$json || $json=='false')
 	echo '{}';
 else
 	echo '('.indent($json).')';
