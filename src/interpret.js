@@ -1,20 +1,39 @@
 window.onload = function(){
 	// Load and compile PHP scripts
+	function loadPHPFiles() {
+		var phpFiles = [];
+		var scripts = document.getElementsByTagName('script');
+		for (var i=0; i<scripts.length; i++) {
+			if (scripts[i].type == 'text/php') {
+				if (scripts[i].src)
+					phpFiles[phpFiles.length] = scripts[i].src;
+			}
+		}
+		
+		return phpFiles;
+	}
+	
 	function loadPHPScripts() {
 		var phpScripts = [];
 		var scripts = document.getElementsByTagName('script');
 		for (var i=0; i<scripts.length; i++) {
 			if (scripts[i].type == 'text/php') {
-				phpScripts[phpScripts.length] = scripts[i].src;
+				if (scripts[i].innerHTML != '') {
+					var script = scripts[i].innerHTML.replace(/\n|\r/g,'');
+					script = script.replace(/\s+<\?/,'<?');
+					script = script.replace(/\?>\s+/,'?>');
+					phpScripts[phpScripts.length] = script;
+				}
 			}
 		}
 		
 		return phpScripts;
 	}
 	
+	var phpFiles = loadPHPFiles();
 	var phpScripts = loadPHPScripts();
 
-	interpreter.interpretPHP(phpScripts);
+	interpreter.interpretPHP(phpFiles, phpScripts);
 }
 
 var interpreter = {
@@ -28,23 +47,43 @@ var interpreter = {
 	 * 
 	 * @param {Array} phypeCodes An array of JSON-objects with parsekit formatted opcodes.
 	 */
-	interpretPHP : function(phpScripts) {
+	interpretPHP : function(phpFiles, phpScripts) {
 		var output = '';
-		for (var i=0; i<phpScripts.length; i++) {
-			// Set the current executing script and add it to the symbol table.
-			interpreter.curScript = phpScripts[i];
+		for (var i=0; i<phpFiles.length; i++) {
+			// Set the currently executing script.
+			interpreter.curScript = phpFiles[i];
 			
 			// Link the variable references in the script to the global variables.
-			var phpCode = ajax.gets(phpScripts[i]);
+			var phpCode = ajax.gets(phpFiles[i]);
 			linker.linkVars(phpCode);
 
 			// Extract parsekit formatted opcodes.
-			var phypeCodes = eval(ajax.gets('src/phpToJSON.php?file='+phpScripts[i]));
+			var phypeCodes = eval(ajax.gets('src/phpToJSON.php?file='+phpFiles[i]));
 			
 			// Store function table
 			funTable = phypeCodes.function_table;
 			
+			interpreter.curOp = 0;
 			interpreter.interpret(phypeCodes);
+		}
+		
+		for (var i=0;i<phpScripts.length; i++) {
+			// Set the currently executing script.
+			interpreter.curScript = 'scriptTag'+i;
+			
+			// Link the variable references in the script to the global variables.
+			linker.linkVars(phpScripts[i]);
+			
+			// Extract parsekit formatted opcodes.
+			var phypeCodes = eval(ajax.gets('src/proxy.php?script='+escape(phpScripts[i])));
+			
+			// Store function table
+			if (typeof(phypeCodes) != 'undefined') {
+				funTable = phypeCodes.function_table;
+				
+				interpreter.curOp = 0;
+				interpreter.interpret(phypeCodes);
+			}
 		}
 	},
 	
@@ -225,7 +264,6 @@ var linker = {
 	},
 	
 	getValue : function(hash) {
-		var_log(valTables);
 		if (symTables[interpreter.curFun] && symTables[interpreter.curFun][hash])
 			return valTables[interpreter.curFun][symTables[interpreter.curFun][hash]];
 		
