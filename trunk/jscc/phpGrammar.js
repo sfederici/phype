@@ -19,7 +19,6 @@ var OP_IF	= 1;
 var OP_IF_ELSE	= 2;
 var OP_WHILE_DO	= 3;
 var OP_DO_WHILE	= 4;
-var OP_READ	= 5;
 var OP_ECHO	= 6;
 
 var OP_EQU	= 10;
@@ -238,7 +237,6 @@ function execute( node )
 	"DO"
 	"ECHO"
 	"WRITE"
-	"READ"
 	'{'
 	'}'
 	';'
@@ -257,7 +255,9 @@ function execute( node )
 	'\)'
 	'#'
 	'\$[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'	Variable [* %match = %match.substr(1,%match.length-1); *]
-	'\'([^\']|\'\')*\''				String		[* %match = %match.substr(1,%match.length-2); %match = %match.replace( /\\'/g, "\'" );*]
+	'\'([^\']|\'\')*\''				String		[* 	%match = %match.substr(1,%match.length-2);
+													%match = %match.replace( /\\'/g, "\'" );
+												*]
 	'[0-9]+'						Integer
 	'[0-9]+\.[0-9]*|[0-9]*\.[0-9]+'	Float
 	'\?>[^<\?]*'							ScriptEnd
@@ -288,7 +288,6 @@ Stmt:		Stmt Stmt			[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 		| DO Stmt WHILE Expression ';'	[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
 		| ECHO Value ';'		[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
 		| WRITE Expression ';'		[* %% = createNode( NODE_OP, OP_WRITE, %2 ); *]
-		| READ Variable ';'		[* %% = createNode( NODE_OP, OP_READ, %2 ); *]
 		| Variable '=' Expression ';'	[* %% = createNode( NODE_OP, OP_ASSIGN, %1, %3 ); *]
 		| '{' Stmt_List '}'		[* %% = %2; *]
 		| ';'				[* %% = createNode( NODE_OP, OP_NONE ); *]
