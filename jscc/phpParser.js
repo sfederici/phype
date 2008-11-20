@@ -1,6 +1,26 @@
 [*
+//////////////////////////////////////
+// GLOBALLY USED VARS AND FUNCTIONS //
+//////////////////////////////////////
 
-//Structs
+/**
+ * Sym table for looking up values.
+ */
+var symTables = {};
+
+/**
+ * Val table for keeping values
+ */
+var valTable = {};
+
+/**
+ * Variable for keeping track of currently executing function.
+ */
+var curFun = '.global';
+
+/**
+ * Node object
+ */
 function NODE()
 {
 	var type;
@@ -8,8 +28,10 @@ function NODE()
 	var children;
 }
 
-//Management functions
-function createNode( type, value, childs )
+/**
+ * Function for creating node objects.
+ */
+function createNode( type, value, children )
 {
 	var n = new NODE();
 	n.type = type;
@@ -22,55 +44,62 @@ function createNode( type, value, childs )
 	return n;
 }
 
-var v_names = new Array();
-var v_values = new Array();
+//var v_names = new Array();
+//var v_values = new Array();
 
-var symTables = {};
-var valTables = {};
 var linker = {
 	assignVar : function(varName, value, scope) {
 		if (!scope)
-			scope = interpreter.curFun;
+			scope = curFun;
 		
-		if (!valTables[scope])
-			valTables[scope] = {};
+		if (!symTables[scope] || symTables[scope] == 'undefined')
+			symTables[scope] = {};
 		
-		valTables[scope][varName] = value;
+		symTables[scope][varName] = scope+'#'+varName
+		valTable[scope+'#'+varName] = value;
 	},
 	
-	getValue : function(hash) {
-		if (symTables[interpreter.curFun] && symTables[interpreter.curFun][hash])
-			return valTables[interpreter.curFun][symTables[interpreter.curFun][hash]];
-		
-		return valTables['.global'][symTables['.global'][hash]];
+	getValue : function(varName) {
+		var firstChar = varName.substring(0,1);
+		if (firstChar == "$") {
+			varName = linker.getValue( varName.substring(1,varName.length) );
+		}
+		//var_log(varName);
+		var_log(symTables);
+		var_log(valTable);
+		if (symTables[curFun] && symTables[curFun][varName])
+			return valTable[symTables[curFun][varName]];
+
+		return valTable['.global#'+varName];
 	},
 	
 	/*linkArrKey : function(hash, ) {
 		
 	}*/
 	
-	linkVar : function(hash, varName, scope) {
+	linkVar : function(locVarName, varName, scope) {
 		if (!scope)
-			scope = interpreter.curFun;
+			scope = curFun;
 		
 		if (!symTables[scope])
 			symTables[scope] = {};
 		
-		symTables[scope][hash] = varName;
-		if (!valTables[scope][varName])
-			valTables[scope][varName] = null;
+		symTables[scope][locVarName] = varName;
+		if (!valTable[scope+'#'+varName])
+			valTable[scope+'#'+varName] = null;
 	},
 	
-	unlinkVar : function(hash, scope) {
+	unlinkVar : function(varName, scope) {
 		if (!scope)
-			scope = interpreter.curFun;
+			scope = curFun;
 		
-		delete valTables[symTables[scope][hash]];
-		delete symTables[scope][hash];
+		delete valTable[symTables[scope][varName]];
+		delete symTables[scope+'#'+varName];
 	}
 	
 }
 
+/*
 //Interpreting function
 function letvar( vname, value )
 {
@@ -105,6 +134,7 @@ function getvar( vname )
 	
 	return value;
 }
+*/
 
 //Defines
 var NODE_OP	= 0;
@@ -145,7 +175,7 @@ var ops = {
 	
 	//OP_ASSIGN
 	'0' : function(node) {
-		letvar( node.children[0], execute( node.children[1] ) );
+		linker.assignVar( node.children[0], execute( node.children[1] ) );
 	},
 	
 	// OP_IF
@@ -242,16 +272,14 @@ var ops = {
 	}
 }
 
-function execute( node )
-{
+function execute( node ) {
 	var ret = 0;
 	
 	if( !node ) {
 		return 0;
 	}
 
-	switch( node.type )
-	{
+	switch( node.type ) {
 		case NODE_OP:
 			var tmp = ops[node.value](node);
 			if (tmp && tmp != 'undefined')
@@ -259,7 +287,7 @@ function execute( node )
 			break;
 			
 		case NODE_VAR:
-			ret = getvar( node.value );
+			ret = linker.getValue( node.value );
 			break;
 			
 		case NODE_CONST:
@@ -299,7 +327,7 @@ function execute( node )
 	'#'
 	'\$[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'	Variable [* %match = %match.substr(1,%match.length-1); *]
 	'\'([^\']|\'\')*\''				String		[* 	%match = %match.substr(1,%match.length-2);
-													%match = %match.replace( /\\'/g, "\'" );
+													%match = %match.replace( /\\'/g, "'" );
 												*]
 	'[0-9]+'						Integer
 	'[0-9]+\.[0-9]*|[0-9]*\.[0-9]+'	Float
@@ -397,5 +425,94 @@ if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 )
 	for( i = 0; i < error_cnt; i++ )
 		alert( "Parse error near >" 
 			+ str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
+}
+
+///////////////
+// DEBUGGING //
+///////////////
+/**
+ * Borrowed from http://snippets.dzone.com/posts/show/4296
+ */
+function var_dump(data,addwhitespace,safety,level) {
+	var rtrn = '';
+	var dt,it,spaces = '';
+	if(!level) {level = 1;}
+	for(var i=0; i<level; i++) {
+		spaces += '   ';
+	}//end for i<level
+	if(typeof(data) != 'object') {
+		dt = data;
+		if(typeof(data) == 'string') {
+			if(addwhitespace == 'html') {
+				dt = dt.replace(/&/g,'&amp;');
+				dt = dt.replace(/>/g,'&gt;');
+				dt = dt.replace(/</g,'&lt;');
+			}//end if addwhitespace == html
+			dt = dt.replace(/\"/g,'\"');
+			dt = '"' + dt + '"';
+		}//end if typeof == string
+		if(typeof(data) == 'function' && addwhitespace) {
+			dt = new String(dt).replace(/\n/g,"\n"+spaces);
+			if(addwhitespace == 'html') {
+				dt = dt.replace(/&/g,'&amp;');
+				dt = dt.replace(/>/g,'&gt;');
+				dt = dt.replace(/</g,'&lt;');
+			}//end if addwhitespace == html
+		}//end if typeof == function
+		if(typeof(data) == 'undefined') {
+			dt = 'undefined';
+		}//end if typeof == undefined
+		if(addwhitespace == 'html') {
+			if(typeof(dt) != 'string') {
+				dt = new String(dt);
+			}//end typeof != string
+			dt = dt.replace(/ /g,"&nbsp;").replace(/\n/g,"<br>");
+		}//end if addwhitespace == html
+		return dt;
+	}//end if typeof != object && != array
+	for (var x in data) {
+		if(safety && (level > safety)) {
+			dt = '*RECURSION*';
+		} else {
+			try {
+			dt = var_dump(data[x],addwhitespace,safety,level+1);
+			} catch (e) {continue;}
+		}//end if-else level > safety
+		it = var_dump(x,addwhitespace,safety,level+1);
+		rtrn += it + ':' + dt + ',';
+		if(addwhitespace) {
+			rtrn += '\n'+spaces;
+		}//end if addwhitespace
+	}//end for...in
+	if(addwhitespace) {
+		rtrn = '{\n' + spaces + rtrn.substr(0,rtrn.length-(2+(level*3))) + '\n' + spaces.substr(0,spaces.length-3) + '}';
+	} else {
+		rtrn = '{' + rtrn.substr(0,rtrn.length-1) + '}';
+	}//end if-else addwhitespace
+	if(addwhitespace == 'html') {
+		rtrn = rtrn.replace(/ /g,"&nbsp;").replace(/\n/g,"<br>");
+	}//end if addwhitespace == html
+	return rtrn;
+}
+
+function log(message) {
+	if (!log.window_ || log.window_.closed) {
+		var win = window.open("", null, "width=600,height=400," +
+							"scrollbars=yes,resizable=yes,status=no," +
+							"location=no,menubar=no,toolbar=no");
+		if (!win) return;
+		var doc = win.document;
+		doc.write("<html><head><title>Debug Log</title></head>" +
+				"<body></body></html>");
+		doc.close();
+		log.window_ = win;
+	}
+	var logLine = log.window_.document.createElement("div");
+	logLine.appendChild(log.window_.document.createTextNode(message));
+	log.window_.document.body.appendChild(logLine);
+}
+
+function var_log(variable) {
+	log(var_dump(variable));
 }
 *]
