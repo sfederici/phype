@@ -70,6 +70,11 @@ function letvar( vname, value )
 
 function getvar( vname )
 {
+	var firstChar = vname.substring(0,1);
+	if (firstChar == "$") {
+		vname = getvar( vname.substring(1,vname.length) );
+	}
+
 	var value = 0;
 	var i;
 	for( i = 0; i < v_names.length; i++ )
@@ -251,17 +256,24 @@ function execute( node )
 	'\('
 	'\)'
 	'#'
-	'<\?([pP][hH][pP])?'						ScriptBegin
-	'\?>'										ScriptEnd
-	'\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'	Variable [* %match = %match.substr(1,%match.length-1); *]
+	'\$[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'	Variable [* %match = %match.substr(1,%match.length-1); *]
 	'\'([^\']|\'\')*\''				String		[* %match = %match.substr(1,%match.length-2); %match = %match.replace( /\\'/g, "\'" );*]
 	'[0-9]+'						Integer
 	'[0-9]+\.[0-9]*|[0-9]*\.[0-9]+'	Float
+	'\?>[^<\?]*'							ScriptEnd
+	'<\?([pP][hH][pP])?'			ScriptBegin
 	;
 
 ##
 
-PHPScript:	ScriptBegin Stmt ScriptEnd		[* execute( %2 ); *]
+PHPScript:	PHPScript ScriptBegin Stmt ScriptEnd	[*	execute( %3 );
+				
+														if (%4.length > 2) {
+															var strNode = createNode( NODE_CONST, %4.substring(2,%4.length) );
+															execute( createNode( NODE_OP, OP_ECHO, strNode ) );
+														}
+														
+													*]
 		|
 		;
 
@@ -315,28 +327,20 @@ Value:		Variable			[* %% = createNode( NODE_VAR, %1 ); *]
 [*
 
 var str = prompt( "Please enter a PHP-script to be executed:",
-	"<? $a = 'Hello World'; echo $a; echo '?>'; ?>" );
+	"<? $a = 'b'; $b='Hello World'; echo $$$a; ?> hej <? echo 'hej igen.'; ?>" );
 
-// UNFUNCTIONAL
 function preParse(str) {
-	var nonPhpStrs = str.split(/<\?([^\?>]|'(\?>|.)*'|"(\?>|.)*")*\?>/g);
-	var phpStrs = str.match(/<\?([^\?>]|'(\?>|.)*'|"(\?>|.)*")*\?>/g);
-	
-	var res = '<?php ';
-	for (var i=0; i<nonPhpStrs.length; i++) {
-		var nonPhpEcho = '';
-		if (nonPhpStrs[i])
-			nonPhpEcho = "echo '"+nonPhpStrs[i].replace(/'/,"\'")+"';";
-			
-		var phpClean = '';
-		if (i < phpStrs.length) {
-			phpClean = phpStrs[i].replace(/<\?([pP][hH][pP])?/,'');
-			phpClean = phpClean.substr(0,phpClean.length-3);
-		}
-		
-		res += nonPhpEcho+phpClean;
+	var firstPhp = str.indexOf('<?');
+	var res = '';
+	if (firstPhp > 0 || firstPhp == -1) {
+		if (firstPhp == -1) firstPhp = str.length;
+		var echoStr = '<? ';
+		echoStr += "echo '"+str.substring(0,firstPhp).replace("'","\'")+"';";
+		echoStr += ' ?>';
+		res = echoStr+str.substring(firstPhp,str.length);
+	} else {
+		res = str;
 	}
-	res += ' ?>';
 	
 	return res
 }
@@ -346,8 +350,7 @@ var error_off	= new Array();
 var error_la	= new Array();
 
 alert(preParse(str));
-
-if( ( error_cnt = __parse( str, error_off, error_la ) ) > 0 )
+if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 )
 {
 	for( i = 0; i < error_cnt; i++ )
 		alert( "Parse error near >" 
