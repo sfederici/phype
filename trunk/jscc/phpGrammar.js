@@ -8,6 +8,104 @@ function NODE()
 	var children;
 }
 
+//Management functions
+function createNode( type, value, childs )
+{
+	var n = new NODE();
+	n.type = type;
+	n.value = value;	
+	n.children = new Array();
+	
+	for( var i = 2; i < arguments.length; i++ )
+		n.children.push( arguments[i] );
+		
+	return n;
+}
+
+var v_names = new Array();
+var v_values = new Array();
+
+var symTables = {};
+var valTables = {};
+var linker = {
+	assignVar : function(varName, value, scope) {
+		if (!scope)
+			scope = interpreter.curFun;
+		
+		if (!valTables[scope])
+			valTables[scope] = {};
+		
+		valTables[scope][varName] = value;
+	},
+	
+	getValue : function(hash) {
+		if (symTables[interpreter.curFun] && symTables[interpreter.curFun][hash])
+			return valTables[interpreter.curFun][symTables[interpreter.curFun][hash]];
+		
+		return valTables['.global'][symTables['.global'][hash]];
+	},
+	
+	/*linkArrKey : function(hash, ) {
+		
+	}*/
+	
+	linkVar : function(hash, varName, scope) {
+		if (!scope)
+			scope = interpreter.curFun;
+		
+		if (!symTables[scope])
+			symTables[scope] = {};
+		
+		symTables[scope][hash] = varName;
+		if (!valTables[scope][varName])
+			valTables[scope][varName] = null;
+	},
+	
+	unlinkVar : function(hash, scope) {
+		if (!scope)
+			scope = interpreter.curFun;
+		
+		delete valTables[symTables[scope][hash]];
+		delete symTables[scope][hash];
+	}
+	
+}
+
+//Interpreting function
+function letvar( vname, value )
+{
+	var i;
+	for( i = 0; i < v_names.length; i++ )
+		if( v_names[i].toString() == vname.toString() )
+			break;
+		
+	if( i == v_names.length )
+	{
+		v_names.push( vname );
+		v_values.push( 0 );
+	}
+
+	v_values[i] = value;
+	
+	return value;
+}
+
+function getvar( vname )
+{
+	var firstChar = vname.substring(0,1);
+	if (firstChar == "$") {
+		vname = getvar( vname.substring(1,vname.length) );
+	}
+
+	var value = 0;
+	var i;
+	for( i = 0; i < v_names.length; i++ )
+		if( v_names[i].toString() == vname.toString() )
+			value = v_values[i];
+	
+	return value;
+}
+
 //Defines
 var NODE_OP	= 0;
 var NODE_VAR	= 1;
@@ -32,56 +130,6 @@ var OP_SUB	= 17;
 var OP_DIV	= 18;
 var OP_MUL	= 19;
 var OP_NEG	= 20;
-
-//Management functions
-function createNode( type, value, childs )
-{
-	var n = new NODE();
-	n.type = type;
-	n.value = value;	
-	n.children = new Array();
-	
-	for( var i = 2; i < arguments.length; i++ )
-		n.children.push( arguments[i] );
-		
-	return n;
-}
-
-var v_names = new Array();
-var v_values = new Array();
-
-//Interpreting function
-function letvar( vname, value )
-{
-	var i;
-	for( i = 0; i < v_names.length; i++ )
-		if( v_names[i].toString() == vname.toString() )
-			break;
-		
-	if( i == v_names.length )
-	{
-		v_names.push( vname );
-		v_values.push( 0 );
-	}
-
-	v_values[i] = value;
-}
-
-function getvar( vname )
-{
-	var firstChar = vname.substring(0,1);
-	if (firstChar == "$") {
-		vname = getvar( vname.substring(1,vname.length) );
-	}
-
-	var value = 0;
-	var i;
-	for( i = 0; i < v_names.length; i++ )
-		if( v_names[i].toString() == vname.toString() )
-			value = v_values[i];
-	
-	return value;
-}
 
 var ops = {
 	// OP_NONE
@@ -131,11 +179,6 @@ var ops = {
 		} while( execute( node.children[1] ) );
 		
 		return ret;
-	},
-	
-	// OP_READ
-	'5' : function(node) {
-		letvar( node.children[0].toString(), prompt( "Please enter a value:", "0"  ) );
 	},
 
 	// OP_ECHO
