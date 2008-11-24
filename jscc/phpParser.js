@@ -19,20 +19,32 @@ var valTable = {};
 var curFun = '.global';
 
 /**
+ * Function table
+ */
+var funTable = {};
+
+/**
  * Node object
  */
-function NODE()
-{
+function NODE() {
 	var type;
 	var value;
 	var children;
 }
 
 /**
+ * Function object
+ */
+function FUNC() {
+	var name;
+	var parameters;
+	var nodes;
+}
+
+/**
  * Function for creating node objects.
  */
-function createNode( type, value, children )
-{
+function createNode( type, value, children ) {
 	var n = new NODE();
 	n.type = type;
 	n.value = value;	
@@ -42,6 +54,21 @@ function createNode( type, value, children )
 		n.children.push( arguments[i] );
 		
 	return n;
+}
+
+/**
+ * Function for creating functions.
+ */
+function createFunction( name, parameters, nodes ) {
+	var f = new FUNC();
+	f.name = name;
+	f.parameters = parameters;
+	f.nodes = new Array();
+	
+	for( var i = 2; i < arguments.length; i++ )
+		f.nodes.push( arguments[i] );
+		
+	return f;
 }
 
 //var v_names = new Array();
@@ -307,10 +334,10 @@ function execute( node ) {
 	"WHILE"
 	"DO"
 	"ECHO"
-	"WRITE"
 	'{'
 	'}'
 	';'
+	','
 	'='
 	'=='
 	'!='
@@ -325,79 +352,92 @@ function execute( node ) {
 	'\('
 	'\)'
 	'#'
-	'\$[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'	Variable [* %match = %match.substr(1,%match.length-1); *]
-	'\'([^\']|\'\')*\''				String		[* 	%match = %match.substr(1,%match.length-2);
-													%match = %match.replace( /\\'/g, "'" );
-												*]
+	'\$[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
+									Variable
+										[* %match = %match.substr(1,%match.length-1); *]
+	'function [\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
+									FunctionName
+										[* %match = %match.substr(9,%match.length-1); *]
+	'\'([^\']|\'\')*\''				String	
+										[*	%match = %match.substr(1,%match.length-2);
+											%match = %match.replace( /\\'/g, "'" ); *]
 	'[0-9]+'						Integer
 	'[0-9]+\.[0-9]*|[0-9]*\.[0-9]+'	Float
-	'\?>[^<\?]*'							ScriptEnd
+	'\?>[^<\?]*'					ScriptEnd
 	'<\?([pP][hH][pP])?'			ScriptBegin
 	;
 
 ##
 
-PHPScript:	PHPScript ScriptBegin Stmt ScriptEnd	[*	execute( %3 );
-				
-														if (%4.length > 2) {
-															var strNode = createNode( NODE_CONST, %4.substring(2,%4.length) );
-															execute( createNode( NODE_OP, OP_ECHO, strNode ) );
-														}
-														
-													*]
+PHPScript:	PHPScript ScriptBegin Stmt ScriptEnd
+										[*	execute( %3 );
+											if (%4.length > 2) {
+												var strNode = createNode( NODE_CONST, %4.substring(2,%4.length) );
+												execute( createNode( NODE_OP, OP_ECHO, strNode ) );
+											} *]
 		|
 		;
 
-Stmt_List:	Stmt_List Stmt			[* %% = createNode( NODE_OP, OP_NONE, %1, %2 ); *]
+Stmt_List:	Stmt_List Stmt				[* %% = createNode( NODE_OP, OP_NONE, %1, %2 ); *]
 		|
 		;
 								
-Stmt:		Stmt Stmt			[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
-		| IF Expression Stmt 		[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
-		| IF Expression Stmt ELSE Stmt	[* %% = createNode( NODE_OP, OP_IF_ELSE, %2, %3, %5 ); *]
-		| WHILE Expression DO Stmt 	[* %% = createNode( NODE_OP, OP_WHILE_DO, %2, %4 ); *]
-		| DO Stmt WHILE Expression ';'	[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
-		| ECHO Value ';'		[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
-		| WRITE Expression ';'		[* %% = createNode( NODE_OP, OP_WRITE, %2 ); *]
-		| Variable '=' Expression ';'	[* %% = createNode( NODE_OP, OP_ASSIGN, %1, %3 ); *]
-		| '{' Stmt_List '}'		[* %% = %2; *]
-		| ';'				[* %% = createNode( NODE_OP, OP_NONE ); *]
+Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
+		|	FunctionName '(' ParameterList ')' '{' Stmt '}'
+										[* createFunction( %1, %3, %6 ) *]
+		|	IF Expression Stmt 			[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
+		|	IF Expression Stmt ELSE Stmt	
+										[* %% = createNode( NODE_OP, OP_IF_ELSE, %2, %3, %5 ); *]
+		|	WHILE Expression DO Stmt 	[* %% = createNode( NODE_OP, OP_WHILE_DO, %2, %4 ); *]
+		|	DO Stmt WHILE Expression ';'	
+										[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
+		|	ECHO Value ';'				[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
+		|	Variable '=' Expression ';'	[* %% = createNode( NODE_OP, OP_ASSIGN, %1, %3 ); *]
+		|	'{' Stmt_List '}'			[* %% = %2; *]
+		|	';'							[* %% = createNode( NODE_OP, OP_NONE ); *]
 		;
+		
+ParameterList:
+			ParameterList Variable		[* %% = createNode( NODE_CONST, %2 ); *]
+		|	','							[* %% = createNode( NODE_OP, OP_NONE ); *]
+		|
+		;	
 
 Expression:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
-		| Expression '<' AddSubExp	[* %% = createNode( NODE_OP, OP_LOT, %1, %3 ); *]
-		| Expression '>' AddSubExp	[* %% = createNode( NODE_OP, OP_GRT, %1, %3 ); *]
-		| Expression '<=' AddSubExp	[* %% = createNode( NODE_OP, OP_LOE, %1, %3 ); *]
-		| Expression '>=' AddSubExp	[* %% = createNode( NODE_OP, OP_GRE, %1, %3 ); *]
-		| Expression '!=' AddSubExp	[* %% = createNode( NODE_OP, OP_NEQ, %1, %3 ); *]
+		| Expression '<' AddSubExp		[* %% = createNode( NODE_OP, OP_LOT, %1, %3 ); *]
+		| Expression '>' AddSubExp		[* %% = createNode( NODE_OP, OP_GRT, %1, %3 ); *]
+		| Expression '<=' AddSubExp		[* %% = createNode( NODE_OP, OP_LOE, %1, %3 ); *]
+		| Expression '>=' AddSubExp		[* %% = createNode( NODE_OP, OP_GRE, %1, %3 ); *]
+		| Expression '!=' AddSubExp		[* %% = createNode( NODE_OP, OP_NEQ, %1, %3 ); *]
 		| AddSubExp
 		;
 
 AddSubExp:	AddSubExp '-' MulDivExp		[* %% = createNode( NODE_OP, OP_SUB, %1, %3 ); *]
-		| AddSubExp '+' MulDivExp	[* %% = createNode( NODE_OP, OP_ADD, %1, %3 ); *]
+		| AddSubExp '+' MulDivExp		[* %% = createNode( NODE_OP, OP_ADD, %1, %3 ); *]
 		| MulDivExp
 		;
 				
 MulDivExp:	MulDivExp '*' NegExp		[* %% = createNode( NODE_OP, OP_MUL, %1, %3 ); *]
-		| MulDivExp '/' NegExp		[* %% = createNode( NODE_OP, OP_DIV, %1, %3 ); *]
+		| MulDivExp '/' NegExp			[* %% = createNode( NODE_OP, OP_DIV, %1, %3 ); *]
 		| NegExp
 		;
 				
-NegExp:		'-' Value			[* %% = createNode( NODE_OP, OP_NEG, %2 ); *]
+NegExp:		'-' Value					[* %% = createNode( NODE_OP, OP_NEG, %2 ); *]
 		| Value
 		;
 
-Value:		Variable			[* %% = createNode( NODE_VAR, %1 ); *]
-		| '(' Expression ')'	[* %% = %2; *]
-		| String				[* %% = createNode( NODE_CONST, %1 ); *]
-		| Integer				[* %% = createNode( NODE_CONST, %1 ); *]
-		| Float					[* %% = createNode( NODE_CONST, %1 ); *]
+Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
+		| '(' Expression ')'			[* %% = %2; *]
+		| String						[* %% = createNode( NODE_CONST, %1 ); *]
+		| Integer						[* %% = createNode( NODE_CONST, %1 ); *]
+		| Float							[* %% = createNode( NODE_CONST, %1 ); *]
 		;
 
 [*
 
 var str = prompt( "Please enter a PHP-script to be executed:",
-	"<? $a = 'b'; $b='Hello World'; echo $$$a; ?> hej <? echo 'hej igen.'; ?>" );
+	"<? function test() { echo 'hello world'; } ?>" );
+	//"<? $a = 'b'; $b='Hello World'; echo $$$a; ?> hej <? echo 'hej igen.'; ?>" );
 
 function preParse(str) {
 	var firstPhp = str.indexOf('<?');
