@@ -209,15 +209,19 @@ var ops = {
 	
 	// OP_FCALL
 	'5' : function (node) {
-		// Initialize parameters for the function scope
-		for ( var i=0; i<node.children.length; i++ ) {
-			
+		/*// Initialize parameters for the function scope
+		curFun = node.value;
+		
+		var f = funTable[node.value];
+		for ( var i=0; i<f.params.length; i++ ) {
+		
+			linker.linkVar(f.params[i].value);
 		}
 		
 		// Execute function
 		execute();
 		
-		// Clear parameters for the function scope
+		// Clear parameters for the function scope*/
 	},
 
 	// OP_ECHO
@@ -337,9 +341,12 @@ function execute( node ) {
 	'\$[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
 									Variable
 										[* %match = %match.substr(1,%match.length-1); *]
-	'function [\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
+	'function [a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
 									FunctionName
 										[* %match = %match.substr(9,%match.length-1); *]
+	'[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\('
+									FunctionInvoke
+										[* %match = %match.substr(0,%match.length-1); *]
 	'\'([^\']|\'\')*\''				String	
 										[*	%match = %match.substr(1,%match.length-2);
 											%match = %match.replace( /\\'/g, "'" ); *]
@@ -365,9 +372,11 @@ Stmt_List:	Stmt_List Stmt				[* %% = createNode( NODE_OP, OP_NONE, %1, %2 ); *]
 		;
 								
 Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
-		|	FunctionName '(' ParameterList ')' '{' Stmt '}'
+		|	FunctionName '(' FormalParameterList ')' '{' Stmt '}'
 										[* 	funTable[funTable.length] = createFunction( %1, curParams, %6 );
+											// Make sure to clean up param list for next function declaration
 											curParams = []; *]
+		|	Expression
 		|	IF Expression Stmt 			[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
 		|	IF Expression Stmt ELSE Stmt	
 										[* %% = createNode( NODE_OP, OP_IF_ELSE, %2, %3, %5 ); *]
@@ -380,46 +389,59 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 		|	';'							[* %% = createNode( NODE_OP, OP_NONE ); *]
 		;
 		
-ParameterList:
-			ParameterList ',' Variable	[* curParams[curParams.length] = createNode( NODE_CONST, %3 ); *]
+FormalParameterList:
+			FormalParameterList ',' Variable
+										[* curParams[curParams.length] = createNode( NODE_CONST, %3 ); *]
 		|	Variable					[* curParams[curParams.length] = createNode( NODE_CONST, %1 ); *]
 		|
 		;	
 
-Expression:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
-		| Expression '<' AddSubExp		[* %% = createNode( NODE_OP, OP_LOT, %1, %3 ); *]
-		| Expression '>' AddSubExp		[* %% = createNode( NODE_OP, OP_GRT, %1, %3 ); *]
-		| Expression '<=' AddSubExp		[* %% = createNode( NODE_OP, OP_LOE, %1, %3 ); *]
-		| Expression '>=' AddSubExp		[* %% = createNode( NODE_OP, OP_GRE, %1, %3 ); *]
-		| Expression '!=' AddSubExp		[* %% = createNode( NODE_OP, OP_NEQ, %1, %3 ); *]
-		| AddSubExp
+Expression:	UnaryOp
+		|	FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_FCALL, %2 ); *]
+		;
+
+ActualParameterList:
+			ActualParameterList ',' Expression
+										[* %% = createNode( NODE_OP, OP_NONE, %1, %3 ); *]
+		|	Expression
+		|
+		;
+
+UnaryOp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
+		|	Expression '<' AddSubExp	[* %% = createNode( NODE_OP, OP_LOT, %1, %3 ); *]
+		|	Expression '>' AddSubExp	[* %% = createNode( NODE_OP, OP_GRT, %1, %3 ); *]
+		|	Expression '<=' AddSubExp	[* %% = createNode( NODE_OP, OP_LOE, %1, %3 ); *]
+		|	Expression '>=' AddSubExp	[* %% = createNode( NODE_OP, OP_GRE, %1, %3 ); *]
+		|	Expression '!=' AddSubExp	[* %% = createNode( NODE_OP, OP_NEQ, %1, %3 ); *]
+		|	AddSubExp
 		;
 
 AddSubExp:	AddSubExp '-' MulDivExp		[* %% = createNode( NODE_OP, OP_SUB, %1, %3 ); *]
-		| AddSubExp '+' MulDivExp		[* %% = createNode( NODE_OP, OP_ADD, %1, %3 ); *]
-		| MulDivExp
+		|	AddSubExp '+' MulDivExp		[* %% = createNode( NODE_OP, OP_ADD, %1, %3 ); *]
+		|	MulDivExp
 		;
 				
 MulDivExp:	MulDivExp '*' NegExp		[* %% = createNode( NODE_OP, OP_MUL, %1, %3 ); *]
-		| MulDivExp '/' NegExp			[* %% = createNode( NODE_OP, OP_DIV, %1, %3 ); *]
-		| NegExp
+		|	MulDivExp '/' NegExp		[* %% = createNode( NODE_OP, OP_DIV, %1, %3 ); *]
+		|	NegExp
 		;
 				
 NegExp:		'-' Value					[* %% = createNode( NODE_OP, OP_NEG, %2 ); *]
-		| Value
+		|	Value
 		;
 
 Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
-		| '(' Expression ')'			[* %% = %2; *]
-		| String						[* %% = createNode( NODE_CONST, %1 ); *]
-		| Integer						[* %% = createNode( NODE_CONST, %1 ); *]
-		| Float							[* %% = createNode( NODE_CONST, %1 ); *]
+		|	'(' Expression ')'			[* %% = %2; *]
+		|	String						[* %% = createNode( NODE_CONST, %1 ); *]
+		|	Integer						[* %% = createNode( NODE_CONST, %1 ); *]
+		|	Float						[* %% = createNode( NODE_CONST, %1 ); *]
 		;
 
 [*
 
 var str = prompt( "Please enter a PHP-script to be executed:",
-	"<? function test($p1,$p2) { echo 'hello world'; } ?>" );
+	"<? function test($p1,$p2) { echo 'hello '; echo 'world'; } test('a','b'); ?>" );
 	//"<? $a = 'b'; $b='Hello World'; echo $$$a; ?> hej <? echo 'hej igen.'; ?>" );
 
 /**
@@ -479,7 +501,7 @@ function var_dump(data,addwhitespace,safety,level) {
 			dt = '"' + dt + '"';
 		}//end if typeof == string
 		if(typeof(data) == 'function' && addwhitespace) {
-			dt = new String(dt).replace(/\n/g,"\n"+spaces);
+			dt = new String(dt).replace(/\n/g,"<br/>"+spaces);
 			if(addwhitespace == 'html') {
 				dt = dt.replace(/&/g,'&amp;');
 				dt = dt.replace(/>/g,'&gt;');
@@ -493,7 +515,7 @@ function var_dump(data,addwhitespace,safety,level) {
 			if(typeof(dt) != 'string') {
 				dt = new String(dt);
 			}//end typeof != string
-			dt = dt.replace(/ /g,"&nbsp;").replace(/\n/g,"<br>");
+			dt = dt.replace(/ /g,"&nbsp;").replace(/\n/g,"<br/>");
 		}//end if addwhitespace == html
 		return dt;
 	}//end if typeof != object && != array
@@ -508,16 +530,16 @@ function var_dump(data,addwhitespace,safety,level) {
 		it = var_dump(x,addwhitespace,safety,level+1);
 		rtrn += it + ':' + dt + ',';
 		if(addwhitespace) {
-			rtrn += '\n'+spaces;
+			rtrn += '<br/>'+spaces;
 		}//end if addwhitespace
 	}//end for...in
 	if(addwhitespace) {
-		rtrn = '{\n' + spaces + rtrn.substr(0,rtrn.length-(2+(level*3))) + '\n' + spaces.substr(0,spaces.length-3) + '}';
+		rtrn = '{<br/>' + spaces + rtrn.substr(0,rtrn.length-(2+(level*3))) + '<br/>' + spaces.substr(0,spaces.length-3) + '}';
 	} else {
 		rtrn = '{' + rtrn.substr(0,rtrn.length-1) + '}';
 	}//end if-else addwhitespace
 	if(addwhitespace == 'html') {
-		rtrn = rtrn.replace(/ /g,"&nbsp;").replace(/\n/g,"<br>");
+		rtrn = rtrn.replace(/ /g,"&nbsp;").replace(/\n/g,"<br/>");
 	}//end if addwhitespace == html
 	return rtrn;
 }
@@ -538,6 +560,8 @@ function log(message) {
 	logLine.appendChild(log.window_.document.createTextNode(message));
 	log.window_.document.body.appendChild(logLine);
 }
+
+
 
 function var_log(variable) {
 	log(var_dump(variable));
