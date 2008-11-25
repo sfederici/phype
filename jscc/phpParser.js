@@ -19,9 +19,14 @@ var valTable = {};
 var curFun = '.global';
 
 /**
+ * Variable for keeping track of parameters for a function.
+ */
+var curParams = [];
+
+/**
  * Function table
  */
-var funTable = {};
+var funTable = [];
 
 /**
  * Node object
@@ -71,9 +76,9 @@ function createFunction( name, parameters, nodes ) {
 	return f;
 }
 
-//var v_names = new Array();
-//var v_values = new Array();
-
+/**
+ * For linking variable references to values, preserving scopes.
+ */
 var linker = {
 	assignVar : function(varName, value, scope) {
 		if (!scope)
@@ -100,7 +105,7 @@ var linker = {
 		return valTable['.global#'+varName];
 	},
 	
-	/*linkArrKey : function(hash, ) {
+	/*linkArrKey : function( ) {
 		
 	}*/
 	
@@ -126,43 +131,6 @@ var linker = {
 	
 }
 
-/*
-//Interpreting function
-function letvar( vname, value )
-{
-	var i;
-	for( i = 0; i < v_names.length; i++ )
-		if( v_names[i].toString() == vname.toString() )
-			break;
-		
-	if( i == v_names.length )
-	{
-		v_names.push( vname );
-		v_values.push( 0 );
-	}
-
-	v_values[i] = value;
-	
-	return value;
-}
-
-function getvar( vname )
-{
-	var firstChar = vname.substring(0,1);
-	if (firstChar == "$") {
-		vname = getvar( vname.substring(1,vname.length) );
-	}
-
-	var value = 0;
-	var i;
-	for( i = 0; i < v_names.length; i++ )
-		if( v_names[i].toString() == vname.toString() )
-			value = v_values[i];
-	
-	return value;
-}
-*/
-
 //Defines
 var NODE_OP	= 0;
 var NODE_VAR	= 1;
@@ -174,6 +142,7 @@ var OP_IF	= 1;
 var OP_IF_ELSE	= 2;
 var OP_WHILE_DO	= 3;
 var OP_DO_WHILE	= 4;
+var OP_FCALL = 5;
 var OP_ECHO	= 6;
 
 var OP_EQU	= 10;
@@ -236,6 +205,19 @@ var ops = {
 		} while( execute( node.children[1] ) );
 		
 		return ret;
+	},
+	
+	// OP_FCALL
+	'5' : function (node) {
+		// Initialize parameters for the function scope
+		for ( var i=0; i<node.children.length; i++ ) {
+			
+		}
+		
+		// Execute function
+		execute();
+		
+		// Clear parameters for the function scope
 	},
 
 	// OP_ECHO
@@ -384,7 +366,8 @@ Stmt_List:	Stmt_List Stmt				[* %% = createNode( NODE_OP, OP_NONE, %1, %2 ); *]
 								
 Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 		|	FunctionName '(' ParameterList ')' '{' Stmt '}'
-										[* createFunction( %1, %3, %6 ) *]
+										[* 	funTable[funTable.length] = createFunction( %1, curParams, %6 );
+											curParams = []; *]
 		|	IF Expression Stmt 			[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
 		|	IF Expression Stmt ELSE Stmt	
 										[* %% = createNode( NODE_OP, OP_IF_ELSE, %2, %3, %5 ); *]
@@ -398,8 +381,8 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 		;
 		
 ParameterList:
-			ParameterList Variable		[* %% = createNode( NODE_CONST, %2 ); *]
-		|	','							[* %% = createNode( NODE_OP, OP_NONE ); *]
+			ParameterList ',' Variable	[* curParams[curParams.length] = createNode( NODE_CONST, %3 ); *]
+		|	Variable					[* curParams[curParams.length] = createNode( NODE_CONST, %1 ); *]
 		|
 		;	
 
@@ -436,9 +419,12 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 [*
 
 var str = prompt( "Please enter a PHP-script to be executed:",
-	"<? function test() { echo 'hello world'; } ?>" );
+	"<? function test($p1,$p2) { echo 'hello world'; } ?>" );
 	//"<? $a = 'b'; $b='Hello World'; echo $$$a; ?> hej <? echo 'hej igen.'; ?>" );
 
+/**
+ * Creates an echo  with non-PHP character data that precedes the first php-tag.
+ */
 function preParse(str) {
 	var firstPhp = str.indexOf('<?');
 	var res = '';
@@ -466,6 +452,7 @@ if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 )
 		alert( "Parse error near >" 
 			+ str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
 }
+var_log(funTable);
 
 ///////////////
 // DEBUGGING //
