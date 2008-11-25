@@ -232,8 +232,17 @@ var ops = {
 		var prevPassedParams = passedParams;
 		passedParams = 0;
 		
+		// Check if function name is dynamically defined
+		var funName = '';
+		var firstChar = node.children[0].substring(0,1);
+		if (firstChar == "$") {
+			funName = linker.getValue( node.children[0].substring(1,node.children[0].length) );
+		} else {
+			funName = node.children[0];
+		}
+		
 		var prevFun = curFun;
-		curFun = node.children[0];
+		curFun = funName;
 
 		// Initialize parameters for the function scope
 		if ( node.children[1] )
@@ -517,7 +526,7 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 [*
 
 var str = prompt( "Please enter a PHP-script to be executed:",
-	"<? function test($p1,$p2) { echo 'hello '; echo 'world'; echo $p1; } test('a','b'); ?>" );
+	"<? $a = 'test'; function test($p1,$p2) { echo 'hello '; echo 'world'; echo $p1; } $a('a','b'); ?>" );
 	//"<? $a = 'b'; $b='Hello World'; echo $$$a; ?> hej <? echo 'hej igen.'; ?>" );
 
 /**
