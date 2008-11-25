@@ -19,14 +19,19 @@ var valTable = {};
 var curFun = '.global';
 
 /**
- * Variable for keeping track of parameters for a function.
+ * Variable for keeping track of formal parameters for a function declaration.
  */
 var curParams = [];
 
 /**
+ * Variable for keeping track of currently passed actual parameters of a function invocation.
+ */
+var passedParams = 0;
+
+/**
  * Function table
  */
-var funTable = [];
+var funTable = {};
 
 /**
  * Node object
@@ -42,7 +47,7 @@ function NODE() {
  */
 function FUNC() {
 	var name;
-	var parameters;
+	var params;
 	var nodes;
 }
 
@@ -64,10 +69,10 @@ function createNode( type, value, children ) {
 /**
  * Function for creating functions.
  */
-function createFunction( name, parameters, nodes ) {
+function createFunction( name, params, nodes ) {
 	var f = new FUNC();
 	f.name = name;
-	f.parameters = parameters;
+	f.params = params;
 	f.nodes = new Array();
 	
 	for( var i = 2; i < arguments.length; i++ )
@@ -96,9 +101,7 @@ var linker = {
 		if (firstChar == "$") {
 			varName = linker.getValue( varName.substring(1,varName.length) );
 		}
-		//var_log(varName);
-		var_log(symTables);
-		var_log(valTable);
+
 		if (symTables[curFun] && symTables[curFun][varName])
 			return valTable[symTables[curFun][varName]];
 
@@ -131,7 +134,10 @@ var linker = {
 	
 }
 
-//Defines
+
+////////////////////
+// OP DEFINITIONS //
+////////////////////
 var NODE_OP	= 0;
 var NODE_VAR	= 1;
 var NODE_CONST	= 2;
@@ -143,7 +149,8 @@ var OP_IF_ELSE	= 2;
 var OP_WHILE_DO	= 3;
 var OP_DO_WHILE	= 4;
 var OP_FCALL = 5;
-var OP_ECHO	= 6;
+var OP_PASS_PARAM = 6;
+var OP_ECHO	= 7;
 
 var OP_EQU	= 10;
 var OP_NEQ	= 11;
@@ -156,6 +163,18 @@ var OP_SUB	= 17;
 var OP_DIV	= 18;
 var OP_MUL	= 19;
 var OP_NEG	= 20;
+
+
+////////////////
+// EXCEPTIONS //
+////////////////
+function funNotFound() {
+	return 'Function not found: '+curFun;
+}
+
+function funInvalidArgCount(argCount) {
+	return 'Function '+curFun+'( ) expecting '+passedParams+' arguments, but only found '+(f.params.length-passedParams)+'.';
+} 
 
 var ops = {
 	// OP_NONE
@@ -209,23 +228,80 @@ var ops = {
 	
 	// OP_FCALL
 	'5' : function (node) {
-		/*// Initialize parameters for the function scope
-		curFun = node.value;
+		// State preservation
+		var prevPassedParams = passedParams;
+		passedParams = 0;
 		
-		var f = funTable[node.value];
-		for ( var i=0; i<f.params.length; i++ ) {
-		
-			linker.linkVar(f.params[i].value);
-		}
+		var prevFun = curFun;
+		curFun = node.children[0];
+
+		// Initialize parameters for the function scope
+		if ( node.children[1] )
+			execute( node.children[1] );
 		
 		// Execute function
-		execute();
+		var ret = '';
+		var f = funTable[curFun];
+		if ( f && f.params.length >= passedParams ) {
+			for ( var i=0; i<f.nodes.length; i++ )
+				ret += execute( f.nodes[i] );
+		} else {
+			if (!f)
+				throw funNotFound();
+			else if (!(f.params.length >= passedParams))
+				throw funInvalidArgCount(f.params.length);
+		}
 		
-		// Clear parameters for the function scope*/
+		// Clear parameters for the function scope
+		for ( var i=0; i<f.params.length; i++ )
+			linker.unlinkVar( f.params[i] );
+		
+		// State roll-back
+		passedParams = prevPassedParams;
+		curFun = prevFun;
+	},
+
+	// OP_PASS_PARAM
+	'6' : function(node) {
+		// Initialize parameter name
+		var f = funTable[curFun];
+
+		if (!f)
+			throw funNotFound();
+		
+		var paramName = '';
+		if ( passedParams < f.params.length )
+			paramName = f.params[passedParams].value;
+		else
+			paramName = '.arg'+passedParams;
+			
+		// Link parameter name with passed value
+		if ( node.children[0] && node.children[0].type != OP_PASS_PARAM )
+			linker.assignVar( paramName, execute( node.children[0] ) );
+		else
+			execute( node.children[0] );
+		
+		passedParams++;
+		
+		if ( node.children[1] ) {
+			// Reinitialize parameter name
+			var paramName = '';
+			if ( passedParams < f.params.length )
+				paramName = f.params[passedParams].value;
+			else
+				paramName = '.arg'+passedParams;
+			
+			// Link
+			linker.assignVar( paramName, execute( node.children[1] ) );
+		}
+		
+		passedParams++;
 	},
 
 	// OP_ECHO
-	'6' : function(node) {
+	'7' : function(node) {
+		var_log(symTables);
+		var_log(valTable);
 		alert( execute( node.children[0] ) );
 	},
 	
@@ -373,7 +449,7 @@ Stmt_List:	Stmt_List Stmt				[* %% = createNode( NODE_OP, OP_NONE, %1, %2 ); *]
 								
 Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 		|	FunctionName '(' FormalParameterList ')' '{' Stmt '}'
-										[* 	funTable[funTable.length] = createFunction( %1, curParams, %6 );
+										[* 	funTable[%1] = createFunction( %1, curParams, %6 );
 											// Make sure to clean up param list for next function declaration
 											curParams = []; *]
 		|	Expression
@@ -398,12 +474,12 @@ FormalParameterList:
 
 Expression:	UnaryOp
 		|	FunctionInvoke ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_FCALL, %2 ); *]
+										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
 		;
 
 ActualParameterList:
 			ActualParameterList ',' Expression
-										[* %% = createNode( NODE_OP, OP_NONE, %1, %3 ); *]
+										[* %% = createNode( NODE_OP, OP_PASS_PARAM, %1, %3 ); *]
 		|	Expression
 		|
 		;
@@ -441,7 +517,7 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 [*
 
 var str = prompt( "Please enter a PHP-script to be executed:",
-	"<? function test($p1,$p2) { echo 'hello '; echo 'world'; } test('a','b'); ?>" );
+	"<? function test($p1,$p2) { echo 'hello '; echo 'world'; echo $p1; } test('a','b'); ?>" );
 	//"<? $a = 'b'; $b='Hello World'; echo $$$a; ?> hej <? echo 'hej igen.'; ?>" );
 
 /**
@@ -474,7 +550,6 @@ if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 )
 		alert( "Parse error near >" 
 			+ str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
 }
-var_log(funTable);
 
 ///////////////
 // DEBUGGING //
