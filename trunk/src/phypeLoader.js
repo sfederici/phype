@@ -18,6 +18,7 @@ var phypeIn = loadPHP;
 
 // Set our phypeOut-variable (this function takes the generated parser-output, and should
 // output this somewhere appropriate).
+var phypeWindow = document;
 var phypeOut = function(out) {
-	document.write(out);
+	phypeWindow.write(out);
 }
