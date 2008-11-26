@@ -487,8 +487,8 @@ function execute( node ) {
 											%match = %match.replace( /\\'/g, "'" ); *]
 	'[0-9]+'						Integer
 	'[0-9]+\.[0-9]*|[0-9]*\.[0-9]+'	Float
-	'\?>[^<\?]*'					ScriptEnd
 	'<\?([pP][hH][pP])?'			ScriptBegin
+	'\?>(([^<\?])|<[^\?])*'							ScriptEnd
 	;
 
 ##
@@ -586,8 +586,16 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-				"<? $a = ''; test('hej verden'); function test($p1) { $a = $p1;" +
-				" } echo $a; ?>" );
+		"<div style=\"color: red;text-align:center;\">"+
+			"<?"+
+			"	$glob = '';"+
+			"	test('Hej verden!');"+
+			"	function test($a) {"+
+			" 		$glob = $a;"+
+			"	}"+
+			"	echo $glob;"+
+			"?>"+
+		"</div>" );
 	};
 }
 
