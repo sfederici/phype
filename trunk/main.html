@@ -9,7 +9,12 @@
 	<!-- PHP SCRIPTS -->
 	<script type="text/php">
 		<?
-			echo 'hello world';
+			$glob = '';
+			test('Hej verden!');
+			function test($a) {
+				$glob = $a;
+			}
+			echo $glob;
 		?>
 	</script>
 	
