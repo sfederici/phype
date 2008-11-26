@@ -143,6 +143,21 @@
 			
 			//output the code
 			document.getElementById( "js_code" ).innerHTML = driver.replace( /\n/g, "<br />" ).replace( /\t/g, "&nbsp;&nbsp;&nbsp;&nbsp;" );
+			
+			//Print the code
+			function codePrinter(message) {
+				if (!codePrinter.window_ || codePrinter.window_.closed) {
+					var codePrinterWin = window.open("", "codePrinter", "width=600,height=400," +
+										"scrollbars=yes,resizable=yes,status=no," +
+										"location=no,menubar=no,toolbar=no");
+					if (!codePrinterWin) return;
+					var doc = codePrinterWin.document;
+					doc.close();
+					codePrinter.window_ = codePrinterWin;
+				}
+				doc.write(message);
+			}
+			codePrinter(driver.replace( /</g, "&lt;" ).replace( />/g, "&gt;" ).replace( /\n/g, "<br />" ).replace( /\t/g, "&nbsp;&nbsp;&nbsp;&nbsp;" ));
 
 			//run the webdriver
 			eval( webdriver );

@@ -19,6 +19,13 @@ function ZEND_ASSIGN(arg1,arg2,arg3) {
 	interpreter.curOp++;
 }
 
+function ZEND_ASSIGN_DIM(arg1,arg2,arg3) {
+	linker.linkVar(arg1.value+1,'.opdata');
+	linker.linkArrKey(arg2.value,arg3.value);
+	
+	interpreter.curOp++;
+}
+
 function ZEND_DO_FCALL(arg1,arg2,arg3) {
 	// Insert sentinel opcode to allow branch back to where we came from on return.
 	var nextOp = interpreter.curOp+1;
@@ -60,7 +67,17 @@ function ZEND_FETCH_R(arg1,arg2,arg3) {
 	interpreter.curOp++;
 }
 
+function ZEND_FREE(arg1,arg2,arg3) {
+	linker.unlinkVar(arg1.value);
+	
+	interpreter.curOp++;
+}
+
 function ZEND_HANDLE_EXCEPTION(arg1,arg2,arg3) {
+	interpreter.curOp++;
+}
+
+function ZEND_INIT_ARRAY(arg1,arg2,arg3) {
 	interpreter.curOp++;
 }
 

@@ -12,5 +12,6 @@ function importScript(scriptName) {
 
 if (debugOn) importScript('src/debug.js');
 importScript('src/utils.js');
+importScript('jsparse/jsparse.js');
 importScript('src/ops.js');
 importScript('src/interpret.js');
