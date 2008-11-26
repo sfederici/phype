@@ -3,35 +3,48 @@
 // GLOBALLY USED VARS AND FUNCTIONS //
 //////////////////////////////////////
 
-/**
- * Sym table for looking up values.
- */
-var symTables = {};
-
-/**
- * Val table for keeping values
- */
-var valTable = {};
-
-/**
- * Variable for keeping track of currently executing function.
- */
-var curFun = '.global';
-
-/**
- * Variable for keeping track of formal parameters for a function declaration.
- */
-var curParams = [];
-
-/**
- * Variable for keeping track of currently passed actual parameters of a function invocation.
- */
-var passedParams = 0;
-
-/**
- * Function table
- */
-var funTable = {};
+var state = {
+	/**
+	 * Sym table for looking up values.
+	 */
+	symTables : {
+	},
+	
+	/**
+	 * Val table for keeping values
+	 */
+	valTable : {},
+	
+	/**
+	 * Variable for keeping track of currently executing function.
+	 */
+	curFun : '.global',
+	
+	/**
+	 * Variable for keeping track of formal parameters for a function declaration.
+	 */
+	curParams : [],
+	
+	/**
+	 * Variable for keeping track of currently passed actual parameters of a function invocation.
+	 */
+	passedParams : 0,
+	
+	/**
+	 * Function table
+	 */
+	funTable : {},
+	
+	/**
+	 * Variable telling whether a termination event has been received (i.e. a return).
+	 */
+	term : false,
+	
+	/**
+	 * Variable for keeping track of most recent return value.
+	 */
+	'return' : ''
+}
 
 /**
  * Node object
@@ -87,25 +100,33 @@ function createFunction( name, params, nodes ) {
 var linker = {
 	assignVar : function(varName, value, scope) {
 		if (!scope)
-			scope = curFun;
-		
-		if (!symTables[scope] || symTables[scope] == 'undefined')
-			symTables[scope] = {};
-		
-		symTables[scope][varName] = scope+'#'+varName
-		valTable[scope+'#'+varName] = value;
+			scope = state.curFun;
+
+		if (typeof(state.symTables[scope]) != 'object')
+			state.symTables[scope] = {};
+
+		if (typeof(state.valTable['.global#'+varName])=='string'
+			&& typeof(state.valTable[scope+'#'+varName])!='string') {
+			state.valTable['.global#'+varName] = value;
+		} else {
+			state.symTables[scope][varName] = scope+'#'+varName
+			state.valTable[scope+'#'+varName] = value;
+		}
 	},
-	
-	getValue : function(varName) {
+
+	getValue : function(varName, scope) {
+		if (!scope)
+			scope = state.curFun;
+		
 		var firstChar = varName.substring(0,1);
 		if (firstChar == "$") {
 			varName = linker.getValue( varName.substring(1,varName.length) );
 		}
 
-		if (symTables[curFun] && symTables[curFun][varName])
-			return valTable[symTables[curFun][varName]];
-		else if (valTable['.global#'+varName])
-			return valTable['.global#'+varName];
+		if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][varName])=='string')
+			return state.valTable[state.symTables[scope][varName]];
+		else if (typeof(state.valTable['.global#'+varName])=='string')
+			return state.valTable['.global#'+varName];
 			
 		throw varNotFound(varName);
 	},
@@ -116,22 +137,22 @@ var linker = {
 	
 	linkVar : function(locVarName, varName, scope) {
 		if (!scope)
-			scope = curFun;
+			scope = state.curFun;
 		
-		if (!symTables[scope])
-			symTables[scope] = {};
+		if (typeof(symTables[scope])!='object')
+			state.symTables[scope] = {};
 		
-		symTables[scope][locVarName] = varName;
-		if (!valTable[scope+'#'+varName])
-			valTable[scope+'#'+varName] = null;
+		state.symTables[scope][locVarName] = varName;
+		if (typeof(state.valTable[scope+'#'+varName])!='string')
+			state.valTable[scope+'#'+varName] = '';
 	},
 	
 	unlinkVar : function(varName, scope) {
 		if (!scope)
-			scope = curFun;
+			scope = state.curFun;
 		
-		delete valTable[symTables[scope][varName]];
-		delete symTables[scope+'#'+varName];
+		delete state.valTable[state.symTables[scope][varName]];
+		delete state.symTables[scope+'#'+varName];
 	}
 	
 }
@@ -152,7 +173,8 @@ var OP_WHILE_DO	= 3;
 var OP_DO_WHILE	= 4;
 var OP_FCALL = 5;
 var OP_PASS_PARAM = 6;
-var OP_ECHO	= 7;
+var OP_RETURN = 7;
+var OP_ECHO	= 8;
 
 var OP_EQU	= 10;
 var OP_NEQ	= 11;
@@ -171,11 +193,11 @@ var OP_NEG	= 20;
 // EXCEPTIONS //
 ////////////////
 function funNotFound() {
-	return 'Function not found: '+curFun;
+	return 'Function not found: '+state.curFun;
 }
 
 function funInvalidArgCount(argCount) {
-	return 'Function '+curFun+'( ) expecting '+argCount+' arguments, but only found '+passedParams+'.';
+	return 'Function '+state.curFun+'( ) expecting '+argCount+' arguments, but only found '+state.passedParams+'.';
 } 
 
 function varNotFound(varName) {
@@ -239,8 +261,8 @@ var ops = {
 	// OP_FCALL
 	'5' : function (node) {
 		// State preservation
-		var prevPassedParams = passedParams;
-		passedParams = 0;
+		var prevPassedParams = state.passedParams;
+		state.passedParams = 0;
 		
 		// Check if function name is dynamically defined
 		var funName = '';
@@ -251,23 +273,22 @@ var ops = {
 			funName = node.children[0];
 		}
 		
-		var prevFun = curFun;
-		curFun = funName;
+		var prevFun = state.curFun;
+		state.curFun = funName;
 
 		// Initialize parameters for the function scope
 		if ( node.children[1] )
 			execute( node.children[1] );
 		
 		// Execute function
-		var ret = '';
-		var f = funTable[curFun];
-		if ( f && f.params.length <= passedParams ) {
+		var f = state.funTable[state.curFun];
+		if ( f && f.params.length <= state.passedParams ) {
 			for ( var i=0; i<f.nodes.length; i++ )
-				ret += execute( f.nodes[i] );
+				execute( f.nodes[i] );
 		} else {
 			if (!f)
 				throw funNotFound();
-			else if (!(f.params.length <= passedParams))
+			else if (!(f.params.length <= state.passedParams))
 				throw funInvalidArgCount(f.params.length);
 		}
 		
@@ -276,14 +297,17 @@ var ops = {
 			linker.unlinkVar( f.params[i] );
 		
 		// State roll-back
-		passedParams = prevPassedParams;
-		curFun = prevFun;
+		state.passedParams = prevPassedParams;
+		state.curFun = prevFun;
+		
+		// Return the value saved in .return in our valTable.
+		return state['return'];
 	},
 
 	// OP_PASS_PARAM
 	'6' : function(node) {
 		// Initialize parameter name
-		var f = funTable[curFun];
+		var f = state.funTable[state.curFun];
 
 		if (!f)
 			throw funNotFound();
@@ -293,14 +317,14 @@ var ops = {
 			if ( node.children[0].value != OP_PASS_PARAM ) {
 				// Initialize parameter name
 				var paramName = '';
-				if ( passedParams < f.params.length )
-					paramName = f.params[passedParams].value;
+				if ( state.passedParams < f.params.length )
+					paramName = f.params[state.passedParams].value;
 				else
-					paramName = '.arg'+passedParams;
+					paramName = '.arg'+state.passedParams;
 				
 				// Link
 				linker.assignVar( paramName, execute( node.children[0] ) );
-				passedParams++;
+				state.passedParams++;
 			} else {
 				execute( node.children[0] );
 			}
@@ -309,20 +333,27 @@ var ops = {
 		if ( node.children[1] ) {
 			// Initialize parameter name
 			var paramName = '';
-			if ( passedParams < f.params.length )
-				paramName = f.params[passedParams].value;
+			if ( state.passedParams < f.params.length )
+				paramName = f.params[state.passedParams].value;
 			else
-				paramName = '.arg'+passedParams;
+				paramName = '.arg'+state.passedParams;
 			
 			// Link
 			linker.assignVar( paramName, execute( node.children[1] ) );
-			passedParams++;
+			state.passedParams++;
 		}
+	},
+
+	// OP_RETURN
+	'7' : function(node) {
+		if (node.children[0])
+			state['return'] = execute( node.children[0] );
 		
+		state.term = true;
 	},
 
 	// OP_ECHO
-	'7' : function(node) {
+	'8' : function(node) {
 		phypeOut( execute( node.children[0] ) );
 	},
 	
@@ -383,6 +414,12 @@ var ops = {
 }
 
 function execute( node ) {
+	// Reset term-event boolean and terminate currently executing action, if a terminate-event was received.
+	if (state.term) {
+		state.term = false;
+		return;
+	}
+	
 	var ret = 0;
 	
 	if( !node ) {
@@ -417,6 +454,7 @@ function execute( node ) {
 	"WHILE"
 	"DO"
 	"ECHO"
+	"RETURN"
 	'{'
 	'}'
 	';'
@@ -470,9 +508,10 @@ Stmt_List:	Stmt_List Stmt				[* %% = createNode( NODE_OP, OP_NONE, %1, %2 ); *]
 								
 Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 		|	FunctionName '(' FormalParameterList ')' '{' Stmt '}'
-										[* 	funTable[%1] = createFunction( %1, curParams, %6 );
+										[* 	state.funTable[%1] = createFunction( %1, state.curParams, %6 );
 											// Make sure to clean up param list for next function declaration
-											curParams = []; *]
+											state.curParams = []; *]
+		|	Return
 		|	Expression
 		|	IF Expression Stmt 			[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
 		|	IF Expression Stmt ELSE Stmt	
@@ -480,7 +519,7 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 		|	WHILE Expression DO Stmt 	[* %% = createNode( NODE_OP, OP_WHILE_DO, %2, %4 ); *]
 		|	DO Stmt WHILE Expression ';'	
 										[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
-		|	ECHO Value ';'				[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
+		|	ECHO Expression ';'			[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
 		|	Variable '=' Expression ';'	[* %% = createNode( NODE_OP, OP_ASSIGN, %1, %3 ); *]
 		|	'{' Stmt_List '}'			[* %% = %2; *]
 		|	';'							[* %% = createNode( NODE_OP, OP_NONE ); *]
@@ -488,10 +527,14 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 		
 FormalParameterList:
 			FormalParameterList ',' Variable
-										[* curParams[curParams.length] = createNode( NODE_CONST, %3 ); *]
-		|	Variable					[* curParams[curParams.length] = createNode( NODE_CONST, %1 ); *]
+										[* state.curParams[state.curParams.length] = createNode( NODE_CONST, %3 ); *]
+		|	Variable					[* state.curParams[state.curParams.length] = createNode( NODE_CONST, %1 ); *]
 		|
 		;	
+
+Return:		RETURN Expression			[* %% = createNode( NODE_OP, OP_RETURN, %2 ); *]
+		|	RETURN						[* %% = createNode( NODE_OP, OP_RETURN ); *]
+		;
 
 Expression:	UnaryOp
 		|	FunctionInvoke ActualParameterList ')'
@@ -543,8 +586,8 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-				"<? $a = 'test'; function test($p1,$p2) { echo 'hello ';" +
-				" echo 'world'; echo $p1; } $a('a','b'); ?>" );
+				"<? $a = ''; test('hej verden'); function test($p1) { $a = $p1;" +
+				" } echo $a; ?>" );
 	};
 }
 
@@ -553,10 +596,6 @@ if (!phypeOut || phypeOut == 'undefined') {
 }
 
 var str = phypeIn();
-/*
-prompt( "Please enter a PHP-script to be executed:",
-	"<? $a = 'test'; function test($p1,$p2) { echo 'hello '; echo 'world'; echo $p1; } $a('a','b'); ?>" );
-*/
 
 /**
  * Creates an echo  with non-PHP character data that precedes the first php-tag.
