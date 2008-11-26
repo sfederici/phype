@@ -104,8 +104,10 @@ var linker = {
 
 		if (symTables[curFun] && symTables[curFun][varName])
 			return valTable[symTables[curFun][varName]];
-
-		return valTable['.global#'+varName];
+		else if (valTable['.global#'+varName])
+			return valTable['.global#'+varName];
+			
+		throw varNotFound(varName);
 	},
 	
 	/*linkArrKey : function( ) {
@@ -173,9 +175,17 @@ function funNotFound() {
 }
 
 function funInvalidArgCount(argCount) {
-	return 'Function '+curFun+'( ) expecting '+passedParams+' arguments, but only found '+(f.params.length-passedParams)+'.';
+	return 'Function '+curFun+'( ) expecting '+argCount+' arguments, but only found '+passedParams+'.';
 } 
 
+function varNotFound(varName) {
+	return 'Variable not found: '+varName;
+}
+
+
+///////////////
+// OPERATORS //
+///////////////
 var ops = {
 	// OP_NONE
 	'-1' : function(node) {
@@ -251,13 +261,13 @@ var ops = {
 		// Execute function
 		var ret = '';
 		var f = funTable[curFun];
-		if ( f && f.params.length >= passedParams ) {
+		if ( f && f.params.length <= passedParams ) {
 			for ( var i=0; i<f.nodes.length; i++ )
 				ret += execute( f.nodes[i] );
 		} else {
 			if (!f)
 				throw funNotFound();
-			else if (!(f.params.length >= passedParams))
+			else if (!(f.params.length <= passedParams))
 				throw funInvalidArgCount(f.params.length);
 		}
 		
@@ -277,23 +287,27 @@ var ops = {
 
 		if (!f)
 			throw funNotFound();
-		
-		var paramName = '';
-		if ( passedParams < f.params.length )
-			paramName = f.params[passedParams].value;
-		else
-			paramName = '.arg'+passedParams;
 			
 		// Link parameter name with passed value
-		if ( node.children[0] && node.children[0].type != OP_PASS_PARAM )
-			linker.assignVar( paramName, execute( node.children[0] ) );
-		else
-			execute( node.children[0] );
-		
-		passedParams++;
+		if ( node.children[0] ) {
+			if ( node.children[0].value != OP_PASS_PARAM ) {
+				// Initialize parameter name
+				var paramName = '';
+				if ( passedParams < f.params.length )
+					paramName = f.params[passedParams].value;
+				else
+					paramName = '.arg'+passedParams;
+				
+				// Link
+				linker.assignVar( paramName, execute( node.children[0] ) );
+				passedParams++;
+			} else {
+				execute( node.children[0] );
+			}
+		}
 		
 		if ( node.children[1] ) {
-			// Reinitialize parameter name
+			// Initialize parameter name
 			var paramName = '';
 			if ( passedParams < f.params.length )
 				paramName = f.params[passedParams].value;
@@ -302,9 +316,9 @@ var ops = {
 			
 			// Link
 			linker.assignVar( paramName, execute( node.children[1] ) );
+			passedParams++;
 		}
 		
-		passedParams++;
 	},
 
 	// OP_ECHO
