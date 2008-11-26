@@ -323,9 +323,7 @@ var ops = {
 
 	// OP_ECHO
 	'7' : function(node) {
-		var_log(symTables);
-		var_log(valTable);
-		alert( execute( node.children[0] ) );
+		phypeOut( execute( node.children[0] ) );
 	},
 	
 	// OP_EQU
@@ -539,9 +537,26 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 
 [*
 
-var str = prompt( "Please enter a PHP-script to be executed:",
+//////////////////////
+// PHYPE I/O-CHECKS //
+//////////////////////
+if (!phypeIn || phypeIn == 'undefined') {
+	var phypeIn = function() {
+		return prompt( "Please enter a PHP-script to be executed:",
+				"<? $a = 'test'; function test($p1,$p2) { echo 'hello ';" +
+				" echo 'world'; echo $p1; } $a('a','b'); ?>" );
+	};
+}
+
+if (!phypeOut || phypeOut == 'undefined') {
+	var phypeOut = alert;
+}
+
+var str = phypeIn();
+/*
+prompt( "Please enter a PHP-script to be executed:",
 	"<? $a = 'test'; function test($p1,$p2) { echo 'hello '; echo 'world'; echo $p1; } $a('a','b'); ?>" );
-	//"<? $a = 'b'; $b='Hello World'; echo $$$a; ?> hej <? echo 'hej igen.'; ?>" );
+*/
 
 /**
  * Creates an echo  with non-PHP character data that precedes the first php-tag.
@@ -566,9 +581,7 @@ var error_cnt 	= 0;
 var error_off	= new Array();
 var error_la	= new Array();
 
-alert(preParse(str));
-if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 )
-{
+if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 ) {
 	for( i = 0; i < error_cnt; i++ )
 		alert( "Parse error near >" 
 			+ str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
@@ -658,8 +671,6 @@ function log(message) {
 	logLine.appendChild(log.window_.document.createTextNode(message));
 	log.window_.document.body.appendChild(logLine);
 }
-
-
 
 function var_log(variable) {
 	log(var_dump(variable));
