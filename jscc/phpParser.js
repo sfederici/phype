@@ -501,7 +501,7 @@ Expression:	UnaryOp
 ActualParameterList:
 			ActualParameterList ',' Expression
 										[* %% = createNode( NODE_OP, OP_PASS_PARAM, %1, %3 ); *]
-		|	Expression
+		|	Expression					[* %% = createNode( NODE_OP, OP_PASS_PARAM, %1 ); *]
 		|
 		;
 
