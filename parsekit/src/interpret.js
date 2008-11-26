@@ -231,6 +231,14 @@ var parser = {
 	 */
 	isFunCall : function(str) {
 		return /[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\([^\)]*\);/.test(str);
+	},
+	
+	isArrayAssign : function(str) {
+		return /\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\[[^\]]*\]=[^;]+;/.test(str);
+	},
+	
+	isArrayInit : function(str) {
+		return /array\([^\)]*\);/.test(str);
 	}
 }
 
@@ -257,6 +265,9 @@ var linker = {
 	},
 	
 	assignVar : function(varName, value, scope) {
+		if (!scope)
+			scope = interpreter.curFun;
+		
 		if (!valTables[scope])
 			valTables[scope] = {};
 		
@@ -270,6 +281,10 @@ var linker = {
 		return valTables['.global'][symTables['.global'][hash]];
 	},
 	
+	/*linkArrKey : function(hash, ) {
+		
+	}*/
+	
 	linkVar : function(hash, varName, scope) {
 		if (!scope)
 			scope = interpreter.curFun;
@@ -282,6 +297,14 @@ var linker = {
 			valTables[scope][varName] = null;
 	},
 	
+	unlinkVar : function(hash, scope) {
+		if (!scope)
+			scope = interpreter.curFun;
+		
+		delete valTables[symTables[scope][hash]];
+		delete symTables[scope][hash];
+	},
+	
 	/**
 	 * Links variable references to global variables.
 	 * 
@@ -290,31 +313,70 @@ var linker = {
 	linkVars : function(str) {
 		str = parser.trim(str);
 		
-		// Find all assignments
-		var assigns = str.match(/(\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*=[^;]+;|[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\([^\)]*\);)/g);
+		// Initialize sym and val tables.
+		symTables[interpreter.curFun] = {};
+		valTables[interpreter.curFun] = {};
+						
+		// Find all assignments to arrays, and find all function calls.
+		var assigns = str.match(/(\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*(\[[^\]]*\])?=[^;]+;|[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\([^\)]*\);|array\([^\)]*\);)/g);
 		if (assigns!=null) {
+			var varCount = 0;
 			for (var i=0; i<assigns.length; i++) {
 				// If the matched string is an assignment, link it to the appropriate global var.
 				if (!parser.isFunCall(assigns[i])) {
-					var varName = assigns[i].match(/[a-zA-Z0-9_]+=/)[0];
-					varName = varName.substring(0,varName.length-1);
-					// Make a reference to the value in the sym table
-					symTables[interpreter.curFun] = {};
-					symTables[interpreter.curFun][i] = varName;
-					
-					// Initialize the value in the val table.
-					valTables[interpreter.curFun] = {};
-					valTables[interpreter.curFun][varName] = null;
+					// Array assign
+					if (parser.isArrayAssign(assigns[i])) {
+						var varName = assigns[i].match(/[a-zA-Z0-9_]+\[/)[0];
+						varName = varName.substring(0,varName.length-1);
+						
+						// Make a reference to the value in the sym table
+						symTables[interpreter.curFun] = {};
+						symTables[interpreter.curFun][varCount] = varName;
+						
+						// Initialize the value in the val table
+						valTables[interpreter.curFun] = {};
+						valTables[interpreter.curFun][varName] = {};
+						
+						// Increase assign-count
+						varCount++;
+					}
+					// Array init
+					else if (parser.isArrayInit(assigns[i])) {
+						// Make a reference to the value in the sym table
+						symTables[interpreter.curFun][varCount] = varName;
+						
+						// Initialize the value in the val table
+						valTables[interpreter.curFun][varCount] = {};
+						
+						// Increase assign-count
+						varCount++;
+					}
+					// Ordinary var assign
+					else {
+						var varName = assigns[i].match(/[a-zA-Z0-9_]+=/)[0];
+						varName = varName.substring(0,varName.length-1);
+						
+						// Make a reference to the value in the sym table
+						symTables[interpreter.curFun][i] = varName;
+						
+						// Initialize the value in the val table
+						valTables[interpreter.curFun][varName] = null;
+					}
 				} 
 				// If the matched string is a function call, link it to the most recent function return value.
 				else {
 					symTables[interpreter.curFun][i] = '.return';
 				}
+				
+				varCount++;
 			}
 		}
+		
+		
 	}
 }
 
 var symTables = {};
 var valTables = {};
 var funTable = {};
+var arrTable = {};

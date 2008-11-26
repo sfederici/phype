@@ -1,0 +1,8 @@
+<?
+function hi($a,$b) {
+	echo $a;
+	echo $b;
+	echo 'Hello world!';
+}
+hi('test1','hej');
+?>
