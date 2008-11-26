@@ -9,7 +9,7 @@ function loadPHP() {
 				phpCode += scripts[i].innerHTML;
 		}
 	}
-	
+
 	return phpCode;
 }
 
@@ -19,5 +19,5 @@ var phypeIn = loadPHP;
 // Set our phypeOut-variable (this function takes the generated parser-output, and should
 // output this somewhere appropriate).
 var phypeOut = function(out) {
-	document.body.innerHTML += out;
+	document.write(out);
 }
