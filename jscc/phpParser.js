@@ -634,6 +634,10 @@ if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 ) {
 			+ str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
 }
 
+if (phypeWindow && phypeWindow.open) {
+	phypeWindow.close();
+}
+
 ///////////////
 // DEBUGGING //
 ///////////////

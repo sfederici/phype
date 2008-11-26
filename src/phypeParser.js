@@ -1594,8 +1594,16 @@ return err_cnt;}
 if (!phypeIn || phypeIn == 'undefined') {
     var phypeIn = function() {
         return prompt( "Please enter a PHP-script to be executed:",
-                "<? $a = ''; test('hej verden'); function test($p1) { $a = $p1;" +
-                " } echo $a; ?> </div> <? echo 'asd'; ?>" );
+        "<div style=\"color: red;text-align:center;\">"+
+            "<?"+
+            "    $glob = '';"+
+            "    test('Hej verden!');"+
+            "    function test($a) {"+
+            "         $glob = $a;"+
+            "    }"+
+            "    echo $glob;"+
+            "?>"+
+        "</div>" );
     };
 }
 
@@ -1632,6 +1640,10 @@ if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 ) {
     for( i = 0; i < error_cnt; i++ )
         alert( "Parse error near >"
             + str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
+}
+
+if (phypeWindow && phypeWindow.open) {
+    phypeWindow.close();
 }
 
 ///////////////
