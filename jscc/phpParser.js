@@ -3,6 +3,11 @@
 // GLOBALLY USED VARS AND FUNCTIONS //
 //////////////////////////////////////
 
+var cons = {
+	global : '.global',
+	objGlobal : '.objGlobal'
+}
+
 var state = {
 	/**
 	 * Sym table for looking up values.
@@ -11,14 +16,24 @@ var state = {
 	},
 	
 	/**
-	 * Val table for keeping values
+	 * Table for keeping actual values
 	 */
 	valTable : {},
 	
 	/**
+	 * Table for keeping actual arrays
+	 */
+	arrTable : {},
+	
+	/**
+	 * Table for keeping actual objects
+	 */
+	objTable : {},
+	
+	/**
 	 * Variable for keeping track of currently executing function.
 	 */
-	curFun : '.global',
+	curFun : cons.global,
 	
 	/**
 	 * Variable for keeping track of formal parameters for a function declaration.
@@ -34,6 +49,11 @@ var state = {
 	 * Function table
 	 */
 	funTable : {},
+	
+	/**
+	 * Class table
+	 */
+	classTable : {},
 	
 	/**
 	 * Variable telling whether a termination event has been received (i.e. a return).
@@ -62,6 +82,11 @@ function FUNC() {
 	var name;
 	var params;
 	var nodes;
+}
+
+function VAL() {
+	var type;
+	var value;
 }
 
 /**
@@ -95,6 +120,18 @@ function createFunction( name, params, nodes ) {
 }
 
 /**
+ * Function for creating values (constant types, arrays or objects).
+ */
+function createValue( type, value ) {
+	var v = new VAL();
+	v.type = type;
+	v.value = value;
+	
+	return v;
+}
+
+
+/**
  * For linking variable references to values, preserving scopes.
  */
 var linker = {
@@ -104,30 +141,39 @@ var linker = {
 
 		if (typeof(state.symTables[scope]) != 'object')
 			state.symTables[scope] = {};
-
-		if (typeof(state.valTable['.global#'+varName])=='string'
-			&& typeof(state.valTable[scope+'#'+varName])!='string') {
-			state.valTable['.global#'+varName] = value;
-		} else {
-			state.symTables[scope][varName] = scope+'#'+varName
-			state.valTable[scope+'#'+varName] = value;
+		
+		var refTable = linker.getRefTableByVal(value);
+		
+		// If the variable is set,
+		// and the variable is set globally and NOT set in our current scope,
+		// and we are NOT looking up the variable from within an object.
+		if (refTable != null
+				&& typeof(refTable[cons.global+'#'+varName])!='undefined'
+				&& typeof(refTable[scope+'#'+varName])=='undefined') {
+			if (refTable !== state.objTable)
+				refTable[cons.global+'#'+varName] = value;
 		}
+		// Assign the variable to the ref table (if it exists)
+		// from within the current scope.
+		else {
+			state.symTables[scope][varName] = scope+'#'+varName
+			refTable[scope+'#'+varName] = value;
+		}
+		// Assign the variable into the appropriate ref table
 	},
 
 	getValue : function(varName, scope) {
 		if (!scope)
 			scope = state.curFun;
 		
-		var firstChar = varName.substring(0,1);
-		if (firstChar == "$") {
-			varName = linker.getValue( varName.substring(1,varName.length) );
-		}
+		// Look up the potentially recursively defined variable.
+		varName = linker.linkRecursively(varName);
 
 		if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][varName])=='string')
 			return state.valTable[state.symTables[scope][varName]];
-		else if (typeof(state.valTable['.global#'+varName])=='string')
-			return state.valTable['.global#'+varName];
-			
+		else if (typeof(state.valTable[cons.global+'#'+varName])=='string')
+			return state.valTable[cons.global+'#'+varName];
+
 		throw varNotFound(varName);
 	},
 	
@@ -135,6 +181,8 @@ var linker = {
 		
 	}*/
 	
+	/*
+	 * For linking variable references.
 	linkVar : function(locVarName, varName, scope) {
 		if (!scope)
 			scope = state.curFun;
@@ -146,6 +194,7 @@ var linker = {
 		if (typeof(state.valTable[scope+'#'+varName])!='string')
 			state.valTable[scope+'#'+varName] = '';
 	},
+	*/
 	
 	unlinkVar : function(varName, scope) {
 		if (!scope)
@@ -153,6 +202,66 @@ var linker = {
 		
 		delete state.valTable[state.symTables[scope][varName]];
 		delete state.symTables[scope+'#'+varName];
+	},
+	
+	getRefTableByVal : function(value) {
+		// Check for sym type
+		switch (value.type) {
+			case T_CONST:
+				return state.valTable;
+			case T_ARRAY:
+				return state.arrTable;
+			case T_OBJECT:
+				return state.objTable;
+			default:
+				return null;
+		}
+	},
+	
+	getRefTableByVar : function(varName, scope) {
+		if (!scope)
+			scope = state.curFun;
+		
+		if (typeof(state.symTables[scope])!='object')
+			state.symTables[scope] = {};
+		
+		// Get symbol name
+		var symName = '';
+		if (typeof(state.symTables[scope][varName])=='string')
+			symName = state.symTables[scope][varName];
+		else if (typeof(state.symTables[cons.global][varName])=='string')
+			symName = state.symTables[cons.global][varName];
+		else
+			symName = '.unset';
+			
+			
+		// Check for sym type
+		switch (symName.substring(0,4)) {
+			case '.val':
+				return state.valTable;
+			case '.arr':
+				return state.arrTable;
+			case '.obj':
+				return state.objTable;
+			default:
+				return null;
+		}
+	},
+	
+	linkRecursively : function(varName) {
+		if (typeof(varName) != 'string' && varName.type != T_CONST)
+			return varName;
+		
+		else if (typeof(varName) == 'string') {
+			varNameVal = varName;
+		} else varNameVal = varName.value;
+		
+		var firstChar = varNameVal.substring(0,1);
+		if (firstChar == "$") {
+			varName = linker.getValue( varNameVal.substring( 1,varNameVal.length ) );
+		}
+		
+		return varName;
 	}
 	
 }
@@ -161,6 +270,10 @@ var linker = {
 ////////////////////
 // OP DEFINITIONS //
 ////////////////////
+var T_CONST = 0;
+var T_ARRAY = 1;
+var T_OBJECT = 2;
+
 var NODE_OP	= 0;
 var NODE_VAR	= 1;
 var NODE_CONST	= 2;
@@ -178,6 +291,7 @@ var OP_ECHO	= 8;
 var OP_ASSIGN_ARR = 9;
 var OP_FETCH_ARR = 10;
 
+/*
 var OP_EQU	= 50;
 var OP_NEQ	= 51;
 var OP_GRT	= 52;
@@ -189,18 +303,24 @@ var OP_SUB	= 57;
 var OP_DIV	= 58;
 var OP_MUL	= 59;
 var OP_NEG	= 60;
+*/ 
 
 
 ////////////////
 // EXCEPTIONS //
 ////////////////
-function funNotFound() {
-	return 'Function not found: '+state.curFun;
+function funNotFound(funName) {
+	return 'Function not found: '+funName;
 }
 
 function funInvalidArgCount(argCount) {
-	return 'Function '+state.curFun+'( ) expecting '+argCount+' arguments, but only found '+state.passedParams+'.';
+	return 'Function '+state.curFun+'( ) expecting '+argCount+
+			' arguments, but only found '+state.passedParams+'.';
 } 
+
+function valInvalid(varName, refType) {
+	return 'Invalid value type of '+varName+': '+refType;
+}
 
 function varNotFound(varName) {
 	return 'Variable not found: '+varName;
@@ -266,17 +386,13 @@ var ops = {
 		var prevPassedParams = state.passedParams;
 		state.passedParams = 0;
 		
-		// Check if function name is dynamically defined
-		var funName = '';
-		var firstChar = node.children[0].substring(0,1);
-		if (firstChar == "$") {
-			funName = linker.getValue( node.children[0].substring(1,node.children[0].length) );
-		} else {
-			funName = node.children[0];
-		}
+		// Check if function name is recursively defined
+		var funName = linker.linkRecursively(node.children[0]);
 		
 		var prevFun = state.curFun;
-		state.curFun = funName;
+		
+		if (funName.type == T_CONST)
+			state.curFun = funName.value;
 
 		// Initialize parameters for the function scope
 		if ( node.children[1] )
@@ -288,9 +404,10 @@ var ops = {
 			for ( var i=0; i<f.nodes.length; i++ )
 				execute( f.nodes[i] );
 		} else {
-			if (!f)
-				throw funNotFound();
-			else if (!(f.params.length <= state.passedParams))
+			if (!f) {
+				var_log(state.funTable);
+				throw funNotFound(funName);
+			} else if (!(f.params.length <= state.passedParams))
 				throw funInvalidArgCount(f.params.length);
 		}
 		
@@ -358,10 +475,34 @@ var ops = {
 
 	// OP_ECHO
 	'8' : function(node) {
-		phypeOut( execute( node.children[0] ) );
+		var val = execute( node.children[0] );
+		switch (val.type) {
+			case T_CONST:
+				phypeOut( val.value );
+				break;
+			case T_ARRAY:
+				phypeOut( 'Array' );
+				break;
+			case T_OBJECT:
+				phypeOut( 'Object' );
+				break;
+		}
 	},
 	
-	// OP_EQU
+	// OP_ASSIGN_ARR
+	'9' : function(node) {
+		var key = execute( node.children[1] );
+		var value = execute( node.children[2] );
+		
+		linker.assignArr( node.children );
+	},
+	
+	// OP_FETCH_ARR
+	'10' : function(node) {
+		
+	},
+	
+	/*// OP_EQU
 	'50' : function(node) {
 		return execute( node.children[0] ) == execute( node.children[1] );
 	},
@@ -414,7 +555,7 @@ var ops = {
 	// OP_NEG
 	'60' : function(node) {
 		return execute( node.children[0] ) * -1;
-	}
+	}*/
 }
 
 function execute( node ) {
@@ -442,7 +583,7 @@ function execute( node ) {
 			break;
 			
 		case NODE_CONST:
-			ret = node.value;
+			ret = createValue( T_CONST, node.value );
 			break;
 	}
 	
@@ -599,7 +740,7 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-		"<? ?>" );
+		"<? $a = 'test'; function test() { echo 'hello world'; } $a(); ?>" );
 	};
 }
 
