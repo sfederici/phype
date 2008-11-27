@@ -511,9 +511,11 @@ var ops = {
     // OP_ASSIGN_ARR
     '9' : function(node) {
         var key = execute( node.children[1] );
-        var value = execute( node.children[2] );
+        var val = execute( node.children[2] );
         
-        linker.assignArr( node.children );
+        linker.assignArr( key, val );
+        
+        return val;
     },
     
     // OP_FETCH_ARR
