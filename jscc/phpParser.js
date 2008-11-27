@@ -88,6 +88,9 @@ function FUNC() {
 	var nodes;
 }
 
+/**
+ * Value object
+ */
 function VAL() {
 	var type;
 	var value;
@@ -157,7 +160,7 @@ var linker = {
 		refTable[scope+'#'+varName] = val;
 	},
 	
-	assignArr : function(variable, key, val, scope) {
+	assignArr : function(varName, key, val, scope) {
 		if (!scope)
 			scope = state.curFun;
 		
@@ -165,12 +168,12 @@ var linker = {
 			state.symTables[scope] = {};
 		
 		// Initialize the variable as an array
-		state.symTables[scope][variable] = cons.arr+scope+'#'+variable;
+		linker.unlinkVar(varName,scope);
+		state.symTables[scope][varName] = cons.arr+scope+'#'+varName;
 		
-		// Assign the value
-		var arrTableKey = scope+'#'+variable;
+		// Check that the entry 
+		var arrTableKey = scope+'#'+varName;
 		if (typeof(state.arrTable[arrTableKey]) != 'object') {
-			alert('new ');
 			state.arrTable[arrTableKey] = {};
 		}
 			
@@ -212,7 +215,9 @@ var linker = {
 		if (!scope)
 			scope = state.curFun;
 		
-		var prefix = getConsDefByVar(varName);
+		var prefix = linker.getConsDefByVar(varName);
+		if (prefix == cons.unset)
+			return;
 		
 		delete state.valTable[state.symTables[scope][varName]];
 		delete state.symTables[prefix+scope+'#'+varName];
@@ -407,7 +412,10 @@ var ops = {
 	
 	//OP_ASSIGN
 	'0' : function(node) {
-		linker.assignVar( node.children[0], execute( node.children[1] ) );
+		var val = execute( node.children[1] );
+		linker.assignVar( node.children[0], val );
+		
+		return val;
 	},
 	
 	// OP_IF
@@ -562,6 +570,8 @@ var ops = {
 		var value = execute( node.children[2] );
 		
 		linker.assignArr( varName, key, value );
+		
+		return value;
 	},
 	
 	// OP_FETCH_ARR
@@ -818,7 +828,7 @@ if (!phypeOut || phypeOut == 'undefined') {
 var str = phypeIn();
 
 /**
- * Creates an echo  with non-PHP character data that precedes the first php-tag.
+ * Creates an echo with non-PHP character data that precedes the first php-tag.
  */
 function preParse(str) {
 	var firstPhp = str.indexOf('<?');
