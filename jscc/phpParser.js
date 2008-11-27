@@ -175,18 +175,20 @@ var OP_FCALL = 5;
 var OP_PASS_PARAM = 6;
 var OP_RETURN = 7;
 var OP_ECHO	= 8;
+var OP_ASSIGN_ARR = 9;
+var OP_FETCH_ARR = 10;
 
-var OP_EQU	= 10;
-var OP_NEQ	= 11;
-var OP_GRT	= 12;
-var OP_LOT	= 13;
-var OP_GRE	= 14;
-var OP_LOE	= 15;
-var OP_ADD	= 16;
-var OP_SUB	= 17;
-var OP_DIV	= 18;
-var OP_MUL	= 19;
-var OP_NEG	= 20;
+var OP_EQU	= 50;
+var OP_NEQ	= 51;
+var OP_GRT	= 52;
+var OP_LOT	= 53;
+var OP_GRE	= 54;
+var OP_LOE	= 55;
+var OP_ADD	= 56;
+var OP_SUB	= 57;
+var OP_DIV	= 58;
+var OP_MUL	= 59;
+var OP_NEG	= 60;
 
 
 ////////////////
@@ -360,57 +362,57 @@ var ops = {
 	},
 	
 	// OP_EQU
-	'10' : function(node) {
+	'50' : function(node) {
 		return execute( node.children[0] ) == execute( node.children[1] );
 	},
 	
 	// OP_NEQ
-	'11' : function(node) {
+	'51' : function(node) {
 		return execute( node.children[0] ) != execute( node.children[1] );
 	},
 	
 	// OP_GRT
-	'12' : function(node) {
+	'52' : function(node) {
 		return execute( node.children[0] ) > execute( node.children[1] );
 	},
 	
 	// OP_LOT
-	'13' : function(node) {
+	'53' : function(node) {
 		return execute( node.children[0] ) < execute( node.children[1] );
 	},
 	
 	// OP_GRE
-	'14' : function(node) {
+	'54' : function(node) {
 		return execute( node.children[0] ) >= execute( node.children[1] );
 	},
 	
 	// OP_LOE
-	'15' : function(node) {
+	'55' : function(node) {
 		return execute( node.children[0] ) <= execute( node.children[1] );
 	},
 	
 	// OP_ADD
-	'16' : function(node) {
+	'56' : function(node) {
 		return execute( node.children[0] ) + execute( node.children[1] );
 	},
 
 	// OP_SUB
-	'17' : function(node) {
+	'57' : function(node) {
 		return execute( node.children[0] ) - execute( node.children[1] );
 	},
 	
 	// OP_DIV
-	'18' : function(node) {
+	'58' : function(node) {
 		return execute( node.children[0] ) / execute( node.children[1] );
 	},
 	
 	// OP_MUL
-	'19' : function(node) {
+	'59' : function(node) {
 		return execute( node.children[0] ) * execute( node.children[1] );
 	},
 	
 	// OP_NEG
-	'20' : function(node) {
+	'60' : function(node) {
 		return execute( node.children[0] ) * -1;
 	}
 }
@@ -459,6 +461,8 @@ function execute( node ) {
 	"RETURN"
 	'{'
 	'}'
+	'\['
+	'\]'
 	';'
 	','
 	'='
@@ -484,13 +488,13 @@ function execute( node ) {
 	'[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\('
 									FunctionInvoke
 										[* %match = %match.substr(0,%match.length-1); *]
-	'\'([^\']|\'\')*\''				String	
+	'\'([^\']|\'\')*\''				String
 										[*	%match = %match.substr(1,%match.length-2);
 											%match = %match.replace( /\\'/g, "'" ); *]
 	'[0-9]+'						Integer
 	'[0-9]+\.[0-9]*|[0-9]*\.[0-9]+'	Float
 	'<\?([pP][hH][pP])?'			ScriptBegin
-	'\?>(([^<\?])|<[^\?])*'							ScriptEnd
+	'\?>(([^<\?])|<[^\?])*'			ScriptEnd
 	;
 
 ##
@@ -523,6 +527,8 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 										[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
 		|	ECHO Expression ';'			[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
 		|	Variable '=' Expression ';'	[* %% = createNode( NODE_OP, OP_ASSIGN, %1, %3 ); *]
+		|	Variable ArrayIndices '=' Expression ';'
+										[* %% = createNode( NODE_OP, OP_ASSIGN_ARR, %1, %2, %4 ); *]
 		|	'{' Stmt_List '}'			[* %% = %2; *]
 		|	';'							[* %% = createNode( NODE_OP, OP_NONE ); *]
 		;
@@ -541,6 +547,11 @@ Return:		RETURN Expression			[* %% = createNode( NODE_OP, OP_RETURN, %2 ); *]
 Expression:	UnaryOp
 		|	FunctionInvoke ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
+		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
+		;
+		
+ArrayIndices:
+			'[' Expression ']'			[* %% = %2; *]
 		;
 
 ActualParameterList:
@@ -588,16 +599,7 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-		"<div style=\"color: red;text-align:center;\">"+
-			"<?"+
-			"	$glob = '';"+
-			"	test('Hej verden!');"+
-			"	function test($a) {"+
-			" 		$glob = $a;"+
-			"	}"+
-			"	echo $glob;"+
-			"?>"+
-		"</div>" );
+		"<? ?>" );
 	};
 }
 
