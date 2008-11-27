@@ -318,6 +318,22 @@ function funInvalidArgCount(argCount) {
 			' arguments, but only found '+state.passedParams+'.';
 } 
 
+function funNameMustBeString(intType) {
+	var type = '';
+	switch (intType) {
+		case T_ARRAY:
+			type = 'Array';
+			break;
+		case T_OBJECT:
+			type = 'Object';
+			break;
+		default:
+			type = 'Unknown';
+			break;
+	}
+	return 'Function name must be string. Found: '+type;
+}
+
 function valInvalid(varName, refType) {
 	return 'Invalid value type of '+varName+': '+refType;
 }
@@ -393,6 +409,10 @@ var ops = {
 		
 		if (funName.type == T_CONST)
 			state.curFun = funName.value;
+		else if (typeof(funName) == 'string') 
+			state.curFun = funName;
+		else 
+			throw funNameMustBeString(funName.type);
 
 		// Initialize parameters for the function scope
 		if ( node.children[1] )
@@ -405,7 +425,6 @@ var ops = {
 				execute( f.nodes[i] );
 		} else {
 			if (!f) {
-				var_log(state.funTable);
 				throw funNotFound(funName);
 			} else if (!(f.params.length <= state.passedParams))
 				throw funInvalidArgCount(f.params.length);
@@ -500,7 +519,7 @@ var ops = {
 	// OP_FETCH_ARR
 	'10' : function(node) {
 		
-	},
+	}
 	
 	/*// OP_EQU
 	'50' : function(node) {
@@ -740,7 +759,7 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-		"<? $a = 'test'; function test() { echo 'hello world'; } $a(); ?>" );
+		"<? $a = 'test'; test(); function test() { echo 'hello world'; } ?>" );
 	};
 }
 
