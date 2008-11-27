@@ -178,7 +178,6 @@ var linker = {
 		}
 			
 		state.arrTable[arrTableKey][key.value] = val.value;
-		var_log(state.arrTable);
 	},
 
 	getValue : function(varName, scope) {
