@@ -17,6 +17,7 @@ var state = {
      * Sym table for looking up values.
      */
     symTables : {
+        '.global' : {}
     },
     
     /**
@@ -154,9 +155,9 @@ var linker = {
             state.symTables[scope] = {};
         
         var refTable = linker.getRefTableByVal(val);
-        var prefix = getConsDefByVal(val);
+        var prefix = linker.getConsDefByVal(val);
         
-        state.symTables[scope][varName] = prefix+linker.getscope+'#'+varName
+        state.symTables[scope][varName] = prefix+scope+'#'+varName
         refTable[scope+'#'+varName] = val;
     },
     
@@ -187,10 +188,16 @@ var linker = {
         // Look up the potentially recursively defined variable.
         varName = linker.linkRecursively(varName);
 
-        if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][varName])=='string')
-            return state.valTable[state.symTables[scope][varName]];
-        else if (typeof(state.valTable[cons.global+'#'+varName])=='string')
+        var refTable = linker.getRefTableByVar(varName);
+        
+        if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][varName])=='string') {
+            var lookupStr = state.symTables[scope][varName];
+            lookupStr = lookupStr.substr(5,lookupStr.length);
+            
+            return refTable[lookupStr];
+        } else if (typeof(state.valTable[cons.global+'#'+varName])=='string') {
             return state.valTable[cons.global+'#'+varName];
+        }
 
         throw varNotFound(varName);
     },
@@ -515,7 +522,7 @@ var ops = {
                     paramName = f.params[state.passedParams].value;
                 else
                     paramName = '.arg'+state.passedParams;
-                
+
                 // Link
                 linker.assignVar( paramName, execute( node.children[0] ) );
                 state.passedParams++;
@@ -549,6 +556,7 @@ var ops = {
     // OP_ECHO
     '8' : function(node) {
         var val = execute( node.children[0] );
+
         switch (val.type) {
             case T_CONST:
                 phypeOut( val.value );
@@ -1868,7 +1876,7 @@ return err_cnt;}
 if (!phypeIn || phypeIn == 'undefined') {
     var phypeIn = function() {
         return prompt( "Please enter a PHP-script to be executed:",
-        "<? $a[0] = 'hej'; $a[1] = 'verden'; ?>" );
+        "<? function test($a) { echo $a; } test('foo'); ?>" );
     };
 }
 
