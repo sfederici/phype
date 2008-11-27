@@ -299,9 +299,11 @@ var ops = {
 		// State roll-back
 		state.passedParams = prevPassedParams;
 		state.curFun = prevFun;
+		var ret = state['return'];
+		state['return'] = 0;
 		
 		// Return the value saved in .return in our valTable.
-		return state['return'];
+		return ret;
 	},
 
 	// OP_PASS_PARAM
