@@ -5,7 +5,11 @@
 
 var cons = {
 	global : '.global',
-	objGlobal : '.objGlobal'
+	objGlobal : '.objGlobal',
+	val : '.val#',
+	arr : '.arr#',
+	obj : '.obj#',
+	unset : '.uns#'
 }
 
 var state = {
@@ -131,35 +135,47 @@ function createValue( type, value ) {
 }
 
 
+/////////////////
+// VAR LINKING //
+/////////////////
+
 /**
  * For linking variable references to values, preserving scopes.
  */
 var linker = {
-	assignVar : function(varName, value, scope) {
+	assignVar : function(varName, val, scope) {
 		if (!scope)
 			scope = state.curFun;
 
 		if (typeof(state.symTables[scope]) != 'object')
 			state.symTables[scope] = {};
 		
-		var refTable = linker.getRefTableByVal(value);
+		var refTable = linker.getRefTableByVal(val);
+		var prefix = getConsDefByVal(val);
 		
-		// If the variable is set,
-		// and the variable is set globally and NOT set in our current scope,
-		// and we are NOT looking up the variable from within an object.
-		if (refTable != null
-				&& typeof(refTable[cons.global+'#'+varName])!='undefined'
-				&& typeof(refTable[scope+'#'+varName])=='undefined') {
-			if (refTable !== state.objTable)
-				refTable[cons.global+'#'+varName] = value;
+		state.symTables[scope][varName] = prefix+linker.getscope+'#'+varName
+		refTable[scope+'#'+varName] = val;
+	},
+	
+	assignArr : function(variable, key, val, scope) {
+		if (!scope)
+			scope = state.curFun;
+		
+		if (typeof(state.symTables[scope]) != 'object')
+			state.symTables[scope] = {};
+		
+		// Initialize the variable as an array
+		state.symTables[scope][variable] = cons.arr+scope+'#'+variable;
+		
+		// Assign the value
+		var arrTableKey = scope+'#'+variable;
+		if (typeof(state.arrTable[arrTableKey]) != 'object') {
+			alert('new ');
+			state.arrTable[arrTableKey] = {};
 		}
-		// Assign the variable to the ref table (if it exists)
-		// from within the current scope.
-		else {
-			state.symTables[scope][varName] = scope+'#'+varName
-			refTable[scope+'#'+varName] = value;
-		}
-		// Assign the variable into the appropriate ref table
+			
+		state.arrTable[arrTableKey][key.value] = val.value;
+		var_log(state.arrTable);
 	},
 
 	getValue : function(varName, scope) {
@@ -176,10 +192,6 @@ var linker = {
 
 		throw varNotFound(varName);
 	},
-	
-	/*linkArrKey : function( ) {
-		
-	}*/
 	
 	/*
 	 * For linking variable references.
@@ -200,8 +212,10 @@ var linker = {
 		if (!scope)
 			scope = state.curFun;
 		
+		var prefix = getConsDefByVar(varName);
+		
 		delete state.valTable[state.symTables[scope][varName]];
-		delete state.symTables[scope+'#'+varName];
+		delete state.symTables[prefix+scope+'#'+varName];
 	},
 	
 	getRefTableByVal : function(value) {
@@ -232,16 +246,16 @@ var linker = {
 		else if (typeof(state.symTables[cons.global][varName])=='string')
 			symName = state.symTables[cons.global][varName];
 		else
-			symName = '.unset';
+			symName = cons.unset;
 			
 			
 		// Check for sym type
-		switch (symName.substring(0,4)) {
-			case '.val':
+		switch (symName.substring(0,5)) {
+			case cons.val:
 				return state.valTable;
-			case '.arr':
+			case cons.arr:
 				return state.arrTable;
-			case '.obj':
+			case cons.obj:
 				return state.objTable;
 			default:
 				return null;
@@ -262,7 +276,40 @@ var linker = {
 		}
 		
 		return varName;
-	}
+	},
+	
+	getConsDefByVal : function(val) {
+		var intType = val.type;
+		switch (intType) {
+			case T_CONST:
+				return cons.val;
+			case T_ARRAY:
+				return cons.arr;
+			case T_OBJECT:
+				return cons.obj;
+			default:
+				return null;
+		}
+	},
+	
+	getConsDefByVar : function(varName, scope) {
+		if (!scope)
+			scope = state.curFun;
+		
+		if (typeof(state.symTables[scope])!='object')
+			state.symTables[scope] = {};
+		
+		// Get symbol name
+		var symName = '';
+		if (typeof(state.symTables[scope][varName])=='string')
+			symName = state.symTables[scope][varName];
+		else if (typeof(state.symTables[cons.global][varName])=='string')
+			symName = state.symTables[cons.global][varName];
+		else
+			symName = '.unset';
+		
+		return symName.substring(0,5);
+	},
 	
 }
 
@@ -510,10 +557,11 @@ var ops = {
 	
 	// OP_ASSIGN_ARR
 	'9' : function(node) {
+		var varName = node.children[0];
 		var key = execute( node.children[1] );
 		var value = execute( node.children[2] );
 		
-		linker.assignArr( node.children );
+		linker.assignArr( varName, key, value );
 	},
 	
 	// OP_FETCH_ARR
@@ -759,7 +807,7 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-		"<? $a = 'test'; test(); function test() { echo 'hello world'; } ?>" );
+		"<? $a[0] = 'hej'; $a[1] = 'verden'; ?>" );
 	};
 }
 
