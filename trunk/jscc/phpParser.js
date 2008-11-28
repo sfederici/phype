@@ -195,11 +195,51 @@ var linker = {
 			lookupStr = lookupStr.substr(5,lookupStr.length);
 			
 			return refTable[lookupStr];
-		} else if (typeof(state.valTable[cons.global+'#'+varName])=='string') {
-			return state.valTable[cons.global+'#'+varName];
+		} else if (typeof(state.symTables[cons.global])=='string') {
+			var lookupStr = state.symTables[cons.global][cleanVarName];
+			lookupStr = lookupStr.substr(5, lookupStr.length);
+			
+			return refTable[lookupStr];
 		}
 
 		throw varNotFound(varName);
+	},
+	
+	getArrValue : function(varName, key, scope) {
+		if (!scope)
+			scope = state.curFun;
+		
+		var cleanVarName = varName.match(/[^\$]/);
+		
+		var result = '';
+		if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][cleanVarName])=='string') {
+			var prefix = state.symTables[scope][cleanVarName].substring(0,5);
+			// THIS IS NOT COMPLIANT WITH STANDARD PHP!
+			// PHP will lookup the character at the position defined by the array key.
+			if (prefix != cons.arr) {
+				throw expectedArrNotFound(cleanVarName);
+			}
+			var lookupStr = state.symTables[scope][cleanVarName];
+			lookupStr = lookupStr.substr(5, lookupStr.length);
+
+			if (state.arrTable[lookupStr] && state.arrTable[lookupStr][key.value])
+				result = state.arrTable[lookupStr][key.value];
+		} else if (typeof(state.symTables[cons.global])=='string') {
+			var lookupStr = state.symTables[cons.global][cleanVarName];
+			lookupStr = lookupStr.substr(5, lookupStr.length);
+			
+			if (state.arrTable[lookupStr] && state.arrTable[lookupStr][key.value])
+				result = state.arrTable[lookupStr][key.value];
+		} else {
+			throw varNotFound(varName);
+		}
+		
+		// Look up the potentially recursively defined variable.
+		if (varName != cleanVarName) {
+			return linker.getValue(result);
+		} else {
+			return result;
+		}
 	},
 	
 	/*
@@ -328,45 +368,49 @@ var linker = {
 ////////////////////
 // OP DEFINITIONS //
 ////////////////////
-var T_CONST = 0;
-var T_ARRAY = 1;
-var T_OBJECT = 2;
+var T_CONST			= 0;
+var T_ARRAY			= 1;
+var T_OBJECT		= 2;
 
-var NODE_OP	= 0;
-var NODE_VAR	= 1;
-var NODE_CONST	= 2;
+var NODE_OP			= 0;
+var NODE_VAR		= 1;
+var NODE_CONST		= 2;
 
-var OP_NONE	= -1;
-var OP_ASSIGN	= 0;
-var OP_IF	= 1;
-var OP_IF_ELSE	= 2;
-var OP_WHILE_DO	= 3;
-var OP_DO_WHILE	= 4;
-var OP_FCALL = 5;
-var OP_PASS_PARAM = 6;
-var OP_RETURN = 7;
-var OP_ECHO	= 8;
-var OP_ASSIGN_ARR = 9;
-var OP_FETCH_ARR = 10;
+var OP_NONE			= -1;
+var OP_ASSIGN		= 0;
+var OP_IF			= 1;
+var OP_IF_ELSE		= 2;
+var OP_WHILE_DO		= 3;
+var OP_DO_WHILE		= 4;
+var OP_FCALL		= 5;
+var OP_PASS_PARAM	= 6;
+var OP_RETURN		= 7;
+var OP_ECHO			= 8;
+var OP_ASSIGN_ARR	= 9;
+var OP_FETCH_ARR	= 10;
 
 /*
-var OP_EQU	= 50;
-var OP_NEQ	= 51;
-var OP_GRT	= 52;
-var OP_LOT	= 53;
-var OP_GRE	= 54;
-var OP_LOE	= 55;
-var OP_ADD	= 56;
-var OP_SUB	= 57;
-var OP_DIV	= 58;
-var OP_MUL	= 59;
-var OP_NEG	= 60;
+var OP_EQU			= 50;
+var OP_NEQ			= 51;
+var OP_GRT			= 52;
+var OP_LOT			= 53;
+var OP_GRE			= 54;
+var OP_LOE			= 55;
+var OP_ADD			= 56;
+var OP_SUB			= 57;
+var OP_DIV			= 58;
+var OP_MUL			= 59;
+var OP_NEG			= 60;
 */ 
 
 
 ////////////////
 // EXCEPTIONS //
 ////////////////
+function expectedArrNotFound(varName) {
+	return 'The variable is not an array: '+funName;
+}
+
 function funNotFound(funName) {
 	return 'Function not found: '+funName;
 }
@@ -556,17 +600,21 @@ var ops = {
 	// OP_ECHO
 	'8' : function(node) {
 		var val = execute( node.children[0] );
-
-		switch (val.type) {
-			case T_CONST:
-				phypeOut( val.value );
-				break;
-			case T_ARRAY:
-				phypeOut( 'Array' );
-				break;
-			case T_OBJECT:
-				phypeOut( 'Object' );
-				break;
+		
+		if (typeof(val) != 'string') {
+			switch (val.type) {
+				case T_CONST:
+					phypeOut( val.value );
+					break;
+				case T_ARRAY:
+					phypeOut( 'Array' );
+					break;
+				case T_OBJECT:
+					phypeOut( 'Object' );
+					break;
+			}
+		} else {
+			phypeOut( val );
 		}
 	},
 	
@@ -583,7 +631,10 @@ var ops = {
 	
 	// OP_FETCH_ARR
 	'10' : function(node) {
+		var varName = node.children[0];
+		var key = execute( node.children[1] );
 		
+		return linker.getArrValue(varName, key);
 	}
 	
 	/*// OP_EQU
@@ -774,16 +825,16 @@ Expression:	UnaryOp
 										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
 		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
 		;
-		
-ArrayIndices:
-			'[' Expression ']'			[* %% = %2; *]
-		;
 
 ActualParameterList:
 			ActualParameterList ',' Expression
 										[* %% = createNode( NODE_OP, OP_PASS_PARAM, %1, %3 ); *]
 		|	Expression					[* %% = createNode( NODE_OP, OP_PASS_PARAM, %1 ); *]
 		|
+		;
+		
+ArrayIndices:
+			'[' Expression ']'			[* %% = %2; *]
 		;
 
 UnaryOp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
@@ -824,7 +875,7 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-		"<? function test($a) { echo $a; } test('foo'); ?>" );
+		"<? $a['test'] = 'foo'; echo $a['test']; ?>" );
 	};
 }
 
