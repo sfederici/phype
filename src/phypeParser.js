@@ -195,11 +195,51 @@ var linker = {
             lookupStr = lookupStr.substr(5,lookupStr.length);
             
             return refTable[lookupStr];
-        } else if (typeof(state.valTable[cons.global+'#'+varName])=='string') {
-            return state.valTable[cons.global+'#'+varName];
+        } else if (typeof(state.symTables[cons.global])=='string') {
+            var lookupStr = state.symTables[cons.global][cleanVarName];
+            lookupStr = lookupStr.substr(5, lookupStr.length);
+            
+            return refTable[lookupStr];
         }
 
         throw varNotFound(varName);
+    },
+    
+    getArrValue : function(varName, key, scope) {
+        if (!scope)
+            scope = state.curFun;
+        
+        var cleanVarName = varName.match(/[^\$]/);
+        
+        var result = '';
+        if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][cleanVarName])=='string') {
+            var prefix = state.symTables[scope][cleanVarName].substring(0,5);
+            // THIS IS NOT COMPLIANT WITH STANDARD PHP!
+            // PHP will lookup the character at the position defined by the array key.
+            if (prefix != cons.arr) {
+                throw expectedArrNotFound(cleanVarName);
+            }
+            var lookupStr = state.symTables[scope][cleanVarName];
+            lookupStr = lookupStr.substr(5, lookupStr.length);
+
+            if (state.arrTable[lookupStr] && state.arrTable[lookupStr][key.value])
+                result = state.arrTable[lookupStr][key.value];
+        } else if (typeof(state.symTables[cons.global])=='string') {
+            var lookupStr = state.symTables[cons.global][cleanVarName];
+            lookupStr = lookupStr.substr(5, lookupStr.length);
+            
+            if (state.arrTable[lookupStr] && state.arrTable[lookupStr][key.value])
+                result = state.arrTable[lookupStr][key.value];
+        } else {
+            throw varNotFound(varName);
+        }
+        
+        // Look up the potentially recursively defined variable.
+        if (varName != cleanVarName) {
+            return linker.getValue(result);
+        } else {
+            return result;
+        }
     },
     
     /*
@@ -328,45 +368,49 @@ var linker = {
 ////////////////////
 // OP DEFINITIONS //
 ////////////////////
-var T_CONST = 0;
-var T_ARRAY = 1;
-var T_OBJECT = 2;
+var T_CONST            = 0;
+var T_ARRAY            = 1;
+var T_OBJECT        = 2;
 
-var NODE_OP    = 0;
-var NODE_VAR    = 1;
-var NODE_CONST    = 2;
+var NODE_OP            = 0;
+var NODE_VAR        = 1;
+var NODE_CONST        = 2;
 
-var OP_NONE    = -1;
-var OP_ASSIGN    = 0;
-var OP_IF    = 1;
-var OP_IF_ELSE    = 2;
-var OP_WHILE_DO    = 3;
-var OP_DO_WHILE    = 4;
-var OP_FCALL = 5;
-var OP_PASS_PARAM = 6;
-var OP_RETURN = 7;
-var OP_ECHO    = 8;
-var OP_ASSIGN_ARR = 9;
-var OP_FETCH_ARR = 10;
+var OP_NONE            = -1;
+var OP_ASSIGN        = 0;
+var OP_IF            = 1;
+var OP_IF_ELSE        = 2;
+var OP_WHILE_DO        = 3;
+var OP_DO_WHILE        = 4;
+var OP_FCALL        = 5;
+var OP_PASS_PARAM    = 6;
+var OP_RETURN        = 7;
+var OP_ECHO            = 8;
+var OP_ASSIGN_ARR    = 9;
+var OP_FETCH_ARR    = 10;
 
 /*
-var OP_EQU    = 50;
-var OP_NEQ    = 51;
-var OP_GRT    = 52;
-var OP_LOT    = 53;
-var OP_GRE    = 54;
-var OP_LOE    = 55;
-var OP_ADD    = 56;
-var OP_SUB    = 57;
-var OP_DIV    = 58;
-var OP_MUL    = 59;
-var OP_NEG    = 60;
+var OP_EQU            = 50;
+var OP_NEQ            = 51;
+var OP_GRT            = 52;
+var OP_LOT            = 53;
+var OP_GRE            = 54;
+var OP_LOE            = 55;
+var OP_ADD            = 56;
+var OP_SUB            = 57;
+var OP_DIV            = 58;
+var OP_MUL            = 59;
+var OP_NEG            = 60;
 */
 
 
 ////////////////
 // EXCEPTIONS //
 ////////////////
+function expectedArrNotFound(varName) {
+    return 'The variable is not an array: '+funName;
+}
+
 function funNotFound(funName) {
     return 'Function not found: '+funName;
 }
@@ -556,17 +600,21 @@ var ops = {
     // OP_ECHO
     '8' : function(node) {
         var val = execute( node.children[0] );
-
-        switch (val.type) {
-            case T_CONST:
-                phypeOut( val.value );
-                break;
-            case T_ARRAY:
-                phypeOut( 'Array' );
-                break;
-            case T_OBJECT:
-                phypeOut( 'Object' );
-                break;
+        
+        if (typeof(val) != 'string') {
+            switch (val.type) {
+                case T_CONST:
+                    phypeOut( val.value );
+                    break;
+                case T_ARRAY:
+                    phypeOut( 'Array' );
+                    break;
+                case T_OBJECT:
+                    phypeOut( 'Object' );
+                    break;
+            }
+        } else {
+            phypeOut( val );
         }
     },
     
@@ -583,7 +631,10 @@ var ops = {
     
     // OP_FETCH_ARR
     '10' : function(node) {
+        var varName = node.children[0];
+        var key = execute( node.children[1] );
         
+        return linker.getArrValue(varName, key);
     }
     
     /*// OP_EQU
@@ -1270,10 +1321,10 @@ var pop_tab = new Array(
     new Array( 41/* Expression */, 1 ),
     new Array( 41/* Expression */, 3 ),
     new Array( 41/* Expression */, 2 ),
-    new Array( 42/* ArrayIndices */, 3 ),
     new Array( 44/* ActualParameterList */, 3 ),
     new Array( 44/* ActualParameterList */, 1 ),
     new Array( 44/* ActualParameterList */, 0 ),
+    new Array( 42/* ArrayIndices */, 3 ),
     new Array( 43/* UnaryOp */, 3 ),
     new Array( 43/* UnaryOp */, 3 ),
     new Array( 43/* UnaryOp */, 3 ),
@@ -1314,7 +1365,7 @@ var act_tab = new Array(
     /* State 13 */ new Array( 35/* "ScriptEnd" */,-17 , 29/* "FunctionName" */,-17 , 2/* "IF" */,-17 , 4/* "WHILE" */,-17 , 5/* "DO" */,-17 , 6/* "ECHO" */,-17 , 28/* "Variable" */,-17 , 8/* "{" */,-17 , 12/* ";" */,-17 , 7/* "RETURN" */,-17 , 30/* "FunctionInvoke" */,-17 , 22/* "-" */,-17 , 25/* "(" */,-17 , 31/* "String" */,-17 , 32/* "Integer" */,-17 , 33/* "Float" */,-17 , 3/* "ELSE" */,-17 , 9/* "}" */,-17 ),
     /* State 14 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 35/* "ScriptEnd" */,-22 , 29/* "FunctionName" */,-22 , 2/* "IF" */,-22 , 4/* "WHILE" */,-22 , 5/* "DO" */,-22 , 6/* "ECHO" */,-22 , 8/* "{" */,-22 , 12/* ";" */,-22 , 7/* "RETURN" */,-22 , 3/* "ELSE" */,-22 , 9/* "}" */,-22 ),
     /* State 15 */ new Array( 35/* "ScriptEnd" */,-23 , 29/* "FunctionName" */,-23 , 2/* "IF" */,-23 , 4/* "WHILE" */,-23 , 5/* "DO" */,-23 , 6/* "ECHO" */,-23 , 28/* "Variable" */,-23 , 8/* "{" */,-23 , 12/* ";" */,-23 , 7/* "RETURN" */,-23 , 30/* "FunctionInvoke" */,-23 , 22/* "-" */,-23 , 25/* "(" */,-23 , 31/* "String" */,-23 , 32/* "Integer" */,-23 , 33/* "Float" */,-23 , 15/* "==" */,-23 , 20/* "<" */,-23 , 19/* ">" */,-23 , 17/* "<=" */,-23 , 18/* ">=" */,-23 , 16/* "!=" */,-23 , 26/* ")" */,-23 , 13/* "," */,-23 , 3/* "ELSE" */,-23 , 11/* "]" */,-23 , 9/* "}" */,-23 ),
-    /* State 16 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 26/* ")" */,-29 , 13/* "," */,-29 ),
+    /* State 16 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 26/* ")" */,-28 , 13/* "," */,-28 ),
     /* State 17 */ new Array( 21/* "+" */,47 , 22/* "-" */,48 , 35/* "ScriptEnd" */,-36 , 29/* "FunctionName" */,-36 , 2/* "IF" */,-36 , 4/* "WHILE" */,-36 , 5/* "DO" */,-36 , 6/* "ECHO" */,-36 , 28/* "Variable" */,-36 , 8/* "{" */,-36 , 12/* ";" */,-36 , 7/* "RETURN" */,-36 , 30/* "FunctionInvoke" */,-36 , 25/* "(" */,-36 , 31/* "String" */,-36 , 32/* "Integer" */,-36 , 33/* "Float" */,-36 , 15/* "==" */,-36 , 20/* "<" */,-36 , 19/* ">" */,-36 , 17/* "<=" */,-36 , 18/* ">=" */,-36 , 16/* "!=" */,-36 , 26/* ")" */,-36 , 13/* "," */,-36 , 3/* "ELSE" */,-36 , 11/* "]" */,-36 , 9/* "}" */,-36 ),
     /* State 18 */ new Array( 23/* "/" */,49 , 24/* "*" */,50 , 35/* "ScriptEnd" */,-39 , 29/* "FunctionName" */,-39 , 2/* "IF" */,-39 , 4/* "WHILE" */,-39 , 5/* "DO" */,-39 , 6/* "ECHO" */,-39 , 28/* "Variable" */,-39 , 8/* "{" */,-39 , 12/* ";" */,-39 , 7/* "RETURN" */,-39 , 30/* "FunctionInvoke" */,-39 , 22/* "-" */,-39 , 25/* "(" */,-39 , 31/* "String" */,-39 , 32/* "Integer" */,-39 , 33/* "Float" */,-39 , 21/* "+" */,-39 , 15/* "==" */,-39 , 20/* "<" */,-39 , 19/* ">" */,-39 , 17/* "<=" */,-39 , 18/* ">=" */,-39 , 16/* "!=" */,-39 , 26/* ")" */,-39 , 13/* "," */,-39 , 3/* "ELSE" */,-39 , 11/* "]" */,-39 , 9/* "}" */,-39 ),
     /* State 19 */ new Array( 35/* "ScriptEnd" */,-42 , 29/* "FunctionName" */,-42 , 2/* "IF" */,-42 , 4/* "WHILE" */,-42 , 5/* "DO" */,-42 , 6/* "ECHO" */,-42 , 28/* "Variable" */,-42 , 8/* "{" */,-42 , 12/* ";" */,-42 , 7/* "RETURN" */,-42 , 30/* "FunctionInvoke" */,-42 , 22/* "-" */,-42 , 25/* "(" */,-42 , 31/* "String" */,-42 , 32/* "Integer" */,-42 , 33/* "Float" */,-42 , 21/* "+" */,-42 , 24/* "*" */,-42 , 23/* "/" */,-42 , 15/* "==" */,-42 , 20/* "<" */,-42 , 19/* ">" */,-42 , 17/* "<=" */,-42 , 18/* ">=" */,-42 , 16/* "!=" */,-42 , 26/* ")" */,-42 , 13/* "," */,-42 , 3/* "ELSE" */,-42 , 11/* "]" */,-42 , 9/* "}" */,-42 ),
@@ -1344,7 +1395,7 @@ var act_tab = new Array(
     /* State 43 */ new Array( 9/* "}" */,71 , 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
     /* State 44 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 35/* "ScriptEnd" */,-21 , 29/* "FunctionName" */,-21 , 2/* "IF" */,-21 , 4/* "WHILE" */,-21 , 5/* "DO" */,-21 , 6/* "ECHO" */,-21 , 28/* "Variable" */,-21 , 8/* "{" */,-21 , 12/* ";" */,-21 , 7/* "RETURN" */,-21 , 30/* "FunctionInvoke" */,-21 , 22/* "-" */,-21 , 25/* "(" */,-21 , 31/* "String" */,-21 , 32/* "Integer" */,-21 , 33/* "Float" */,-21 , 3/* "ELSE" */,-21 , 9/* "}" */,-21 ),
     /* State 45 */ new Array( 13/* "," */,72 , 26/* ")" */,73 ),
-    /* State 46 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 26/* ")" */,-28 , 13/* "," */,-28 ),
+    /* State 46 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 26/* ")" */,-27 , 13/* "," */,-27 ),
     /* State 47 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
     /* State 48 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
     /* State 49 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
@@ -1384,8 +1435,8 @@ var act_tab = new Array(
     /* State 83 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 12/* ";" */,91 , 5/* "DO" */,64 ),
     /* State 84 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 12/* ";" */,92 ),
     /* State 85 */ new Array( 35/* "ScriptEnd" */,-14 , 29/* "FunctionName" */,-14 , 2/* "IF" */,-14 , 4/* "WHILE" */,-14 , 5/* "DO" */,-14 , 6/* "ECHO" */,-14 , 28/* "Variable" */,-14 , 8/* "{" */,-14 , 12/* ";" */,-14 , 7/* "RETURN" */,-14 , 30/* "FunctionInvoke" */,-14 , 22/* "-" */,-14 , 25/* "(" */,-14 , 31/* "String" */,-14 , 32/* "Integer" */,-14 , 33/* "Float" */,-14 , 3/* "ELSE" */,-14 , 9/* "}" */,-14 ),
-    /* State 86 */ new Array( 14/* "=" */,-26 , 35/* "ScriptEnd" */,-26 , 29/* "FunctionName" */,-26 , 2/* "IF" */,-26 , 4/* "WHILE" */,-26 , 5/* "DO" */,-26 , 6/* "ECHO" */,-26 , 28/* "Variable" */,-26 , 8/* "{" */,-26 , 12/* ";" */,-26 , 7/* "RETURN" */,-26 , 30/* "FunctionInvoke" */,-26 , 22/* "-" */,-26 , 25/* "(" */,-26 , 31/* "String" */,-26 , 32/* "Integer" */,-26 , 33/* "Float" */,-26 , 15/* "==" */,-26 , 20/* "<" */,-26 , 19/* ">" */,-26 , 17/* "<=" */,-26 , 18/* ">=" */,-26 , 16/* "!=" */,-26 , 3/* "ELSE" */,-26 , 26/* ")" */,-26 , 13/* "," */,-26 , 11/* "]" */,-26 , 9/* "}" */,-26 ),
-    /* State 87 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 26/* ")" */,-27 , 13/* "," */,-27 ),
+    /* State 86 */ new Array( 14/* "=" */,-29 , 35/* "ScriptEnd" */,-29 , 29/* "FunctionName" */,-29 , 2/* "IF" */,-29 , 4/* "WHILE" */,-29 , 5/* "DO" */,-29 , 6/* "ECHO" */,-29 , 28/* "Variable" */,-29 , 8/* "{" */,-29 , 12/* ";" */,-29 , 7/* "RETURN" */,-29 , 30/* "FunctionInvoke" */,-29 , 22/* "-" */,-29 , 25/* "(" */,-29 , 31/* "String" */,-29 , 32/* "Integer" */,-29 , 33/* "Float" */,-29 , 15/* "==" */,-29 , 20/* "<" */,-29 , 19/* ">" */,-29 , 17/* "<=" */,-29 , 18/* ">=" */,-29 , 16/* "!=" */,-29 , 3/* "ELSE" */,-29 , 26/* ")" */,-29 , 13/* "," */,-29 , 11/* "]" */,-29 , 9/* "}" */,-29 ),
+    /* State 87 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 26/* ")" */,-26 , 13/* "," */,-26 ),
     /* State 88 */ new Array( 26/* ")" */,-18 , 13/* "," */,-18 ),
     /* State 89 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
     /* State 90 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 35/* "ScriptEnd" */,-10 , 3/* "ELSE" */,-10 , 9/* "}" */,-10 ),
@@ -1731,22 +1782,22 @@ __dbg_print( "\tPerforming semantic action..." ); switch( act )
     break;
     case 26:
     {
-         rval = vstack[ vstack.length - 2 ];
+         rval = createNode( NODE_OP, OP_PASS_PARAM, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
     }
     break;
     case 27:
     {
-         rval = createNode( NODE_OP, OP_PASS_PARAM, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+         rval = createNode( NODE_OP, OP_PASS_PARAM, vstack[ vstack.length - 1 ] );
     }
     break;
     case 28:
     {
-         rval = createNode( NODE_OP, OP_PASS_PARAM, vstack[ vstack.length - 1 ] );
+        rval = vstack[ vstack.length - 0 ];
     }
     break;
     case 29:
     {
-        rval = vstack[ vstack.length - 0 ];
+         rval = vstack[ vstack.length - 2 ];
     }
     break;
     case 30:
@@ -1876,7 +1927,7 @@ return err_cnt;}
 if (!phypeIn || phypeIn == 'undefined') {
     var phypeIn = function() {
         return prompt( "Please enter a PHP-script to be executed:",
-        "<? function test($a) { echo $a; } test('foo'); ?>" );
+        "<? $a['test'] = 'foo'; echo $a['test']; ?>" );
     };
 }
 
