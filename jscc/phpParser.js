@@ -325,7 +325,7 @@ var linker = {
 	},
 	
 	/*
-	 * For linking variable references.
+	 * For linking variable references (unsupported as of yet).
 	linkVar : function(locVarName, varName, scope) {
 		if (!scope)
 			scope = state.curFun;

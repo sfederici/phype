@@ -1,26 +1,21 @@
-<html>
-<head>
-	<!-- JavaScipt -->
-	<script type="text/javascript">
-		var debugOn = true;
-	</script>
-	<script type="text/javascript" src="src/phype.js"></script>
-	
-	<!-- PHP SCRIPTS -->
-	<script type="text/php">
-		<?
-			$glob = '';
-			test('Hej verden!');
-			function test($a) {
-				$glob = $a;
-			}
-			echo $glob;
-		?>
-	</script>
-	
-	<link rel="SHORTCUT ICON" href="favicon.ico"> 
-</head>
-<body>
-
-</body>
-</html>
+<script type="text/php">
+	<html>
+	<head>
+		<title><? echo 'PHYPE'; ?></title>
+		<link rel="SHORTCUT ICON" href="favicon.ico"/> 
+	</head>
+	<body>
+		<div style="color: red; text-align:center;">
+			<?
+				$glob = '<br/><br/>World!';
+				test('Hello');
+				function test($a) {
+					echo $a;
+				}
+				echo $glob;
+			?>
+		</div>
+	</body>
+	</html>
+</script>
+<script type="text/javascript" src="src/phype.js"></script>
