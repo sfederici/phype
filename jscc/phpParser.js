@@ -354,6 +354,8 @@ var linker = {
 	getRefTableByVal : function(value) {
 		// Check for sym type
 		switch (value.type) {
+			case T_INT:
+			case T_FLOAT:
 			case T_CONST:
 				return state.valTable;
 			case T_ARRAY:
@@ -414,6 +416,8 @@ var linker = {
 	getConsDefByVal : function(val) {
 		var intType = val.type;
 		switch (intType) {
+			case T_INT:
+			case T_FLOAT:
 			case T_CONST:
 				return cons.val;
 			case T_ARRAY:
@@ -453,10 +457,14 @@ var linker = {
 var T_CONST			= 0;
 var T_ARRAY			= 1;
 var T_OBJECT		= 2;
+var T_INT			= 3;
+var T_FLOAT			= 4;
 
 var NODE_OP			= 0;
 var NODE_VAR		= 1;
 var NODE_CONST		= 2;
+var NODE_INT		= 3;
+var NODE_FLOAT		= 4;
 
 var OP_NONE			= -1;
 var OP_ASSIGN		= 0;
@@ -472,7 +480,7 @@ var OP_ASSIGN_ARR	= 9;
 var OP_FETCH_ARR	= 10;
 var OP_ARR_KEYS_R	= 11;
 
-/*
+
 var OP_EQU			= 50;
 var OP_NEQ			= 51;
 var OP_GRT			= 52;
@@ -484,7 +492,7 @@ var OP_SUB			= 57;
 var OP_DIV			= 58;
 var OP_MUL			= 59;
 var OP_NEG			= 60;
-*/ 
+
 
 
 ////////////////
@@ -553,8 +561,9 @@ var ops = {
 	
 	// OP_IF
 	'1' : function(node) {
-		if( execute( node.children[0] ) )
-			return execute( node.children[1] );
+		var condChild = execute(node.children[0]);
+		if(condChild.value)
+			return execute(node.children[1]);
 	},
 	
 	// OP_IF_ELSE
@@ -686,6 +695,8 @@ var ops = {
 		
 		if (typeof(val) != 'string') {
 			switch (val.type) {
+				case T_INT:
+				case T_FLOAT:
 				case T_CONST:
 					phypeOut( val.value );
 					break;
@@ -757,60 +768,154 @@ var ops = {
 		return arrKeys;
 	},
 	
-	/*// OP_EQU
+	// OP_EQU
 	'50' : function(node) {
-		return execute( node.children[0] ) == execute( node.children[1] );
+		var leftChild = execute(node.children[0]);
+		var rightChild = execute(node.children[1]);
+		var resultNode;
+		if (leftChild.value == rightChild.value)
+			resultNode = createValue(T_CONST, 1);
+		else
+			resultNode = createValue(T_CONST, 0);
+		return resultNode;
 	},
 	
 	// OP_NEQ
 	'51' : function(node) {
-		return execute( node.children[0] ) != execute( node.children[1] );
+		var leftChild = execute(node.children[0]);
+		var rightChild = execute(node.children[1]);
+		var resultNode;
+		if (leftChild.value != rightChild.value)
+			resultNode = createValue(T_CONST, 1);
+		else
+			resultNode = createValue(T_CONST, 0);
+		return resultNode;
 	},
 	
 	// OP_GRT
 	'52' : function(node) {
-		return execute( node.children[0] ) > execute( node.children[1] );
-	},
+		var leftChild = execute(node.children[0]);
+		var rightChild = execute(node.children[1]);
+		var resultNode;
+		if (leftChild.value > rightChild.value)
+			resultNode = createValue(T_CONST, 1);
+		else
+			resultNode = createValue(T_CONST, 0);
+		return resultNode;
+		},
 	
 	// OP_LOT
 	'53' : function(node) {
-		return execute( node.children[0] ) < execute( node.children[1] );
+		var leftChild = execute(node.children[0]);
+		var rightChild = execute(node.children[1]);
+		var resultNode;
+		if (leftChild.value < rightChild.value)
+			resultNode = createValue(T_CONST, 1);
+		else
+			resultNode = createValue(T_CONST, 0);
+		return resultNode;
 	},
 	
 	// OP_GRE
 	'54' : function(node) {
-		return execute( node.children[0] ) >= execute( node.children[1] );
+				var leftChild = execute(node.children[0]);
+		var rightChild = execute(node.children[1]);
+		var resultNode;
+		if (leftChild.value >= rightChild.value)
+			resultNode = createValue(T_CONST, 1);
+		else
+			resultNode = createValue(T_CONST, 0);
+		return resultNode;
 	},
 	
 	// OP_LOE
 	'55' : function(node) {
-		return execute( node.children[0] ) <= execute( node.children[1] );
+		var leftChild = execute(node.children[0]);
+		var rightChild = execute(node.children[1]);
+		var resultNode;
+		if (leftChild.value <= rightChild.value)
+			resultNode = createValue(T_CONST, 1);
+		else
+			resultNode = createValue(T_CONST, 0);
+		return resultNode;
 	},
 	
 	// OP_ADD
 	'56' : function(node) {
-		return execute( node.children[0] ) + execute( node.children[1] );
+		var leftChild = execute(node.children[0]);
+		var rightChild = execute(node.children[1]);
+
+		var leftValue;
+		var rightValue;
+		var type = T_INT;
+		
+		switch (leftChild.type) {
+			// TODO: Check for PHP-standard.
+			case T_INT:
+			case T_CONST:
+				leftValue = parseInt(leftChild.value);
+				break;
+			case T_FLOAT:
+				leftValue = parseFloat(leftChild.value);
+				type = T_FLOAT;
+				break;
+		}
+		switch (rightChild.type) {
+			// TODO: Check for PHP-standard.
+			case T_INT:
+			case T_CONST:
+				rightValue = parseInt(rightChild.value);
+				break;
+			case T_FLOAT:
+				rightValue = parseFloat(rightChild.value);
+				type = T_FLOAT;
+				break;
+		}
+
+		var result = leftValue + rightValue;
+		var resultNode = createValue(type, result);
+
+		return resultNode;
 	},
 
 	// OP_SUB
 	'57' : function(node) {
-		return execute( node.children[0] ) - execute( node.children[1] );
+		var leftChild = execute(node.children[0]);
+		var rightChild = execute(node.children[1]);
+		var result = leftChild.value - rightChild.value;
+		var resultNode = createValue(T_CONST, result);
+
+		return resultNode;
 	},
 	
 	// OP_DIV
 	'58' : function(node) {
-		return execute( node.children[0] ) / execute( node.children[1] );
+		var leftChild = execute(node.children[0]);
+		var rightChild = execute(node.children[1]);
+		var result = leftChild.value / rightChild.value;
+		var resultNode = createValue(T_CONST, result);
+
+		return resultNode;
 	},
 	
 	// OP_MUL
 	'59' : function(node) {
-		return execute( node.children[0] ) * execute( node.children[1] );
+		var leftChild = execute(node.children[0]);
+		var rightChild = execute(node.children[1]);
+		var result = leftChild.value * rightChild.value;
+		var resultNode = createValue(T_CONST, result);
+
+		return resultNode;
 	},
 	
 	// OP_NEG
 	'60' : function(node) {
-		return execute( node.children[0] ) * -1;
-	}*/
+		var child = execute(node.children[0]);
+		var result = -(child.value);
+		var resultNode = createValue(T_CONST, result);
+
+		return resultNode;
+	}
 }
 
 function execute( node ) {
@@ -839,6 +944,14 @@ function execute( node ) {
 			
 		case NODE_CONST:
 			ret = createValue( T_CONST, node.value );
+			break;
+		
+		case NODE_INT:
+			ret = createValue( T_INT, node.value );
+			break;
+		
+		case NODE_FLOAT:
+			ret = createValue( T_FLOAT, node.value );
 			break;
 	}
 	
@@ -940,7 +1053,8 @@ Return:		RETURN Expression			[* %% = createNode( NODE_OP, OP_RETURN, %2 ); *]
 		|	RETURN						[* %% = createNode( NODE_OP, OP_RETURN ); *]
 		;
 
-Expression:	UnaryOp
+Expression:	'(' Expression ')'			[* %% = %2; *]
+		|	BinaryOp
 		|	FunctionInvoke ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
 		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
@@ -959,7 +1073,7 @@ ArrayIndices:
 		|	'[' Expression ']'			[* %% = %2; *]
 		;
 
-UnaryOp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
+BinaryOp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
 		|	Expression '<' AddSubExp	[* %% = createNode( NODE_OP, OP_LOT, %1, %3 ); *]
 		|	Expression '>' AddSubExp	[* %% = createNode( NODE_OP, OP_GRT, %1, %3 ); *]
 		|	Expression '<=' AddSubExp	[* %% = createNode( NODE_OP, OP_LOE, %1, %3 ); *]
@@ -973,20 +1087,20 @@ AddSubExp:	AddSubExp '-' MulDivExp		[* %% = createNode( NODE_OP, OP_SUB, %1, %3 
 		|	MulDivExp
 		;
 				
-MulDivExp:	MulDivExp '*' NegExp		[* %% = createNode( NODE_OP, OP_MUL, %1, %3 ); *]
-		|	MulDivExp '/' NegExp		[* %% = createNode( NODE_OP, OP_DIV, %1, %3 ); *]
-		|	NegExp
+MulDivExp:	MulDivExp '*' UnaryOp		[* %% = createNode( NODE_OP, OP_MUL, %1, %3 ); *]
+		|	MulDivExp '/' UnaryOp		[* %% = createNode( NODE_OP, OP_DIV, %1, %3 ); *]
+		|	UnaryOp
 		;
 				
-NegExp:		'-' Value					[* %% = createNode( NODE_OP, OP_NEG, %2 ); *]
+UnaryOp:	'-' Value					[* %% = createNode( NODE_OP, OP_NEG, %2 ); *]
 		|	Value
 		;
 
 Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 		|	'(' Expression ')'			[* %% = %2; *]
 		|	String						[* %% = createNode( NODE_CONST, %1 ); *]
-		|	Integer						[* %% = createNode( NODE_CONST, %1 ); *]
-		|	Float						[* %% = createNode( NODE_CONST, %1 ); *]
+		|	Integer						[* %% = createNode( NODE_INT, %1 ); *]
+		|	Float						[* %% = createNode( NODE_FLOAT, %1 ); *]
 		;
 
 [*
@@ -997,7 +1111,8 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-		"<? $a[0][1] = 'foo'; $a[0][2] = 'bar'; echo $a[0][1]; echo $a[0][2]; ?>" );
+		"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
+		);
 	};
 }
 
