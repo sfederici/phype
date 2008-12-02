@@ -178,7 +178,7 @@ var linker = {
 			state.arrTable[arrTableKey] = {};
 		}
 			
-		state.arrTable[arrTableKey][key.value] = val.value;
+		state.arrTable[arrTableKey][key.value] = val;
 	},
 	
 	assignArrMulti : function(varName, keys, val, scope) {
@@ -197,14 +197,14 @@ var linker = {
 		if (typeof(state.arrTable[arrTableKey]) != 'object') {
 			state.arrTable[arrTableKey] = {};
 		}
-		
+
 		var keyRef = 'state.arrTable[arrTableKey]';
 		for ( var i=0; i<keys.length; i++ ) {
 			eval('if (!'+keyRef+') '+keyRef+' = {};');
 			keyRef = keyRef+'['+keys[i].value+']';
 		}
 		
-		keyRef = keyRef+' = val.value;';
+		keyRef = keyRef+' = val;';
 		eval(keyRef);
 	},
 
@@ -263,7 +263,7 @@ var linker = {
 		} else {
 			throw varNotFound(varName);
 		}
-		
+
 		// Look up the potentially recursively defined variable.
 		if (varName != cleanVarName) {
 			return linker.getValue(result);
@@ -479,6 +479,7 @@ var OP_ECHO			= 8;
 var OP_ASSIGN_ARR	= 9;
 var OP_FETCH_ARR	= 10;
 var OP_ARR_KEYS_R	= 11;
+var OP_CONCAT		= 12;
 
 
 var OP_EQU			= 50;
@@ -719,7 +720,7 @@ var ops = {
 		var value = execute( node.children[2] );
 		
 		// If keys is an (javascript) array, assign it as a multi-dimensional array.
-		if (typeof(keys) == 'object' && keys.length != 'undefined')
+		if (typeof(keys) == 'object' && keys.length && keys.length != 'undefined')
 			linker.assignArrMulti( varName, keys, value );
 		// Otherwise, assign it ordinarily.
 		else
@@ -735,12 +736,13 @@ var ops = {
 		
 		var value = '';
 		// If keys is a JS array, fetch the value as a multi-dimensional PHP array.
-		if (typeof(keys) == 'object' && keys.length != 'undefined')
+		if (typeof(keys) == 'object' && keys.length && keys.length != 'undefined')
 			value = linker.getArrValueMulti(varName, keys);
 		// Otherwise, fetch it ordinarily.
-		else
+		else {
 			value = linker.getArrValue(varName, keys);
-		
+		}
+
 		return value;
 	},
 	
@@ -766,6 +768,14 @@ var ops = {
 		}
 		
 		return arrKeys;
+	},
+	
+	// OP_CONCAT
+	'12' : function(node) {
+		var leftChild = execute( node.children[0] );
+		var rightChild = execute( node.children[1] );
+
+		return createValue( T_CONST, leftChild.value+rightChild.value );
 	},
 	
 	// OP_EQU
@@ -974,6 +984,7 @@ function execute( node ) {
 	'\]'
 	';'
 	','
+	'\.'
 	'='
 	'=='
 	'!='
@@ -1044,8 +1055,10 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 		
 FormalParameterList:
 			FormalParameterList ',' Variable
-										[* state.curParams[state.curParams.length] = createNode( NODE_CONST, %3 ); *]
-		|	Variable					[* state.curParams[state.curParams.length] = createNode( NODE_CONST, %1 ); *]
+										[* state.curParams[state.curParams.length] =
+												createNode( NODE_CONST, %3 ); *]
+		|	Variable					[* state.curParams[state.curParams.length] =
+												createNode( NODE_CONST, %1 ); *]
 		|
 		;	
 
@@ -1079,6 +1092,7 @@ BinaryOp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 
 		|	Expression '<=' AddSubExp	[* %% = createNode( NODE_OP, OP_LOE, %1, %3 ); *]
 		|	Expression '>=' AddSubExp	[* %% = createNode( NODE_OP, OP_GRE, %1, %3 ); *]
 		|	Expression '!=' AddSubExp	[* %% = createNode( NODE_OP, OP_NEQ, %1, %3 ); *]
+		|	Expression '.' Expression	[* %% = createNode( NODE_OP, OP_CONCAT, %1, %3 ); *]
 		|	AddSubExp
 		;
 
@@ -1111,7 +1125,8 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-		"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
+			"<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
+			//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
 		);
 	};
 }
@@ -1213,7 +1228,8 @@ function var_dump(data,addwhitespace,safety,level) {
 		}//end if addwhitespace
 	}//end for...in
 	if(addwhitespace) {
-		rtrn = '{<br/>' + spaces + rtrn.substr(0,rtrn.length-(2+(level*3))) + '<br/>' + spaces.substr(0,spaces.length-3) + '}';
+		rtrn = '{<br/>' + spaces + rtrn.substr(0,rtrn.length-(2+(level*3))) + '<br/>' +
+					spaces.substr(0,spaces.length-3) + '}';
 	} else {
 		rtrn = '{' + rtrn.substr(0,rtrn.length-1) + '}';
 	}//end if-else addwhitespace
@@ -1223,6 +1239,9 @@ function var_dump(data,addwhitespace,safety,level) {
 	return rtrn;
 }
 
+/**
+ * Borrowed from http://ajaxcookbook.org/javascript-debug-log/
+ */
 function log(message) {
 	if (!log.window_ || log.window_.closed) {
 		var win = window.open("", null, "width=600,height=400," +
