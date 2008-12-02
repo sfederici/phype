@@ -172,13 +172,40 @@ var linker = {
 		linker.unlinkVar(varName,scope);
 		state.symTables[scope][varName] = cons.arr+scope+'#'+varName;
 		
-		// Check that the entry 
+		// Check that the entry exists. Initialize it if it does not.
 		var arrTableKey = scope+'#'+varName;
 		if (typeof(state.arrTable[arrTableKey]) != 'object') {
 			state.arrTable[arrTableKey] = {};
 		}
 			
 		state.arrTable[arrTableKey][key.value] = val.value;
+	},
+	
+	assignArrMulti : function(varName, keys, val, scope) {
+		if (!scope)
+			scope = state.curFun;
+		
+		if (typeof(state.symTables[scope]) != 'object')
+			state.symTables[scope] = {};
+		
+		// Initialize the variable as an array
+		linker.unlinkVar(varName,scope);
+		state.symTables[scope][varName] = cons.arr+scope+'#'+varName;
+		
+		// Check that the entry exists. Initialize it if it does not.
+		var arrTableKey = scope+'#'+varName;
+		if (typeof(state.arrTable[arrTableKey]) != 'object') {
+			state.arrTable[arrTableKey] = {};
+		}
+		
+		var keyRef = 'state.arrTable[arrTableKey]';
+		for ( var i=0; i<keys.length; i++ ) {
+			eval('if (!'+keyRef+') '+keyRef+' = {};');
+			keyRef = keyRef+'['+keys[i].value+']';
+		}
+		
+		keyRef = keyRef+' = val.value;';
+		eval(keyRef);
 	},
 
 	getValue : function(varName, scope) {
@@ -219,17 +246,72 @@ var linker = {
 			if (prefix != cons.arr) {
 				throw expectedArrNotFound(cleanVarName);
 			}
+			
 			var lookupStr = state.symTables[scope][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 
+			// Look up the value of the variable
 			if (state.arrTable[lookupStr] && state.arrTable[lookupStr][key.value])
 				result = state.arrTable[lookupStr][key.value];
 		} else if (typeof(state.symTables[cons.global])=='string') {
 			var lookupStr = state.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
+			// Look up the value of the variable
 			if (state.arrTable[lookupStr] && state.arrTable[lookupStr][key.value])
 				result = state.arrTable[lookupStr][key.value];
+		} else {
+			throw varNotFound(varName);
+		}
+		
+		// Look up the potentially recursively defined variable.
+		if (varName != cleanVarName) {
+			return linker.getValue(result);
+		} else {
+			return result;
+		}
+	},
+	
+	getArrValueMulti : function(varName, keys, scope) {
+		if (!scope)
+			scope = state.curFun;
+		
+		var cleanVarName = varName.match(/[^\$]/);
+		
+		var result = '';
+		if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][cleanVarName])=='string') {
+			var prefix = state.symTables[scope][cleanVarName].substring(0,5);
+			// THIS IS NOT COMPLIANT WITH STANDARD PHP!
+			// PHP will lookup the character at the position defined by the array key.
+			if (prefix != cons.arr) {
+				throw expectedArrNotFound(cleanVarName);
+			}
+			
+			var lookupStr = state.symTables[scope][cleanVarName];
+			lookupStr = lookupStr.substr(5, lookupStr.length);
+
+			// Generate key lookup-command
+			var keyRef = 'state.arrTable[lookupStr]';
+			for ( var i=0; i<keys.length; i++ ) {
+				keyRef = keyRef+'['+keys[i].value+']';
+			}
+
+			// Look up the value of the variable
+			keyRef = 'result = '+keyRef+';';
+			eval(keyRef);
+		} else if (typeof(state.symTables[cons.global])=='string') {
+			var lookupStr = state.symTables[cons.global][cleanVarName];
+			lookupStr = lookupStr.substr(5, lookupStr.length);
+			
+			// Generate key lookup-command
+			var keyRef = 'state.arrTable[lookupStr]';
+			for ( var i=0; i<keys.length; i++ ) {
+				keyRef = keyRef+'['+keys[i].value+']';
+			}
+			
+			// Look up the value of the variable
+			keyRef = 'result = '+keyRef+';';
+			eval(keyRef);
 		} else {
 			throw varNotFound(varName);
 		}
@@ -365,9 +447,9 @@ var linker = {
 }
 
 
-////////////////////
-// OP DEFINITIONS //
-////////////////////
+/////////////////////////////
+// OP AND TYPE DEFINITIONS //
+/////////////////////////////
 var T_CONST			= 0;
 var T_ARRAY			= 1;
 var T_OBJECT		= 2;
@@ -388,6 +470,7 @@ var OP_RETURN		= 7;
 var OP_ECHO			= 8;
 var OP_ASSIGN_ARR	= 9;
 var OP_FETCH_ARR	= 10;
+var OP_ARR_KEYS_R	= 11;
 
 /*
 var OP_EQU			= 50;
@@ -621,10 +704,15 @@ var ops = {
 	// OP_ASSIGN_ARR
 	'9' : function(node) {
 		var varName = node.children[0];
-		var key = execute( node.children[1] );
+		var keys = execute( node.children[1] );
 		var value = execute( node.children[2] );
 		
-		linker.assignArr( varName, key, value );
+		// If keys is an (javascript) array, assign it as a multi-dimensional array.
+		if (typeof(keys) == 'object' && keys.length != 'undefined')
+			linker.assignArrMulti( varName, keys, value );
+		// Otherwise, assign it ordinarily.
+		else
+			linker.assignArr( varName, keys, value );
 		
 		return value;
 	},
@@ -632,10 +720,42 @@ var ops = {
 	// OP_FETCH_ARR
 	'10' : function(node) {
 		var varName = node.children[0];
-		var key = execute( node.children[1] );
+		var keys = execute( node.children[1] );
 		
-		return linker.getArrValue(varName, key);
-	}
+		var value = '';
+		// If keys is a JS array, fetch the value as a multi-dimensional PHP array.
+		if (typeof(keys) == 'object' && keys.length != 'undefined')
+			value = linker.getArrValueMulti(varName, keys);
+		// Otherwise, fetch it ordinarily.
+		else
+			value = linker.getArrValue(varName, keys);
+		
+		return value;
+	},
+	
+	// OP_ARR_KEYS_R
+	'11' : function(node) {
+		var arrKeys = new Array();
+		
+		if ( node.children[0] ) {
+			// If the first child contains recursive array keys, fetch the the recursively defined array keys,
+			// and join these with the existing array keys.
+			if ( node.children[0].value == OP_ARR_KEYS_R ) {
+				arrKeys.join( execute( node.children[0] ) );
+			}
+			// Otherwise, insert the array key at the end of our list of array.
+			else {
+				arrKeys.push( execute( node.children[0] ) );
+			}
+		}
+		
+		// Add the last array key (if it exists) to the list of array keys.
+		if ( node.children[1] ) {
+			arrKeys.push( execute( node.children[1] ) );
+		}
+		
+		return arrKeys;
+	},
 	
 	/*// OP_EQU
 	'50' : function(node) {
@@ -834,7 +954,9 @@ ActualParameterList:
 		;
 		
 ArrayIndices:
-			'[' Expression ']'			[* %% = %2; *]
+			ArrayIndices '[' Expression ']'
+										[* %% = createNode( NODE_OP, OP_ARR_KEYS_R, %1, %3 ); *]
+		|	'[' Expression ']'			[* %% = %2; *]
 		;
 
 UnaryOp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
@@ -875,7 +997,7 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-		"<? $a['test'] = 'foo'; echo $a['test']; ?>" );
+		"<? $a[0][1] = 'foo'; $a[0][2] = 'bar'; echo $a[0][1]; echo $a[0][2]; ?>" );
 	};
 }
 
