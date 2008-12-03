@@ -2,7 +2,7 @@
 #labels Phase-Design
 
 = Type representation =
-Floats and integers are interpreted and parsed as in Javascript. There are some semantic differences in parsing of these -- need to be corrected.
+Floats and integers are interpreted and parsed as in Javascript. There are some semantic differences in parsing of these in Javascript vs. PHP -- these need to be corrected.
 
 = Character lookup via array syntax =
 In PHP, if you have a variable containing a string `$a = "Hello world!";`, then `$a[0]` would return the string `"H"`. At the moment, phype throws an error if you try to use array representation for looking up a character in a string.
