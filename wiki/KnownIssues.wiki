@@ -20,3 +20,6 @@ The phype implementation aims to be fairly broad at first. Syntactic sugar will 
 
 === Library functions ===
 We have not yet found a smart solution to the problem of implementing support for PHP's extensive library functions.
+
+=== PHP error types and handling ===
+PHP operates with different types of errors, and the environment defines how these errors affect the run-time behaviour. At the moment, phype operates with parse-errors (alerted) and exceptions (thrown), and does not distinguish between error types.
