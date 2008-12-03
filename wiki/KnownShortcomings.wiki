@@ -1,4 +1,4 @@
-#summary Known short comings or errors that phype has compared to PHP
+#summary Known shortcomings or errors that phype has compared to PHP
 #labels Phase-Design
 
 = Array assignment =
