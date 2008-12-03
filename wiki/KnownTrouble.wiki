@@ -17,3 +17,6 @@ Variable referencing would speed up eg. assigning an array into a variable. Thes
 
 === Syntactic sugar ===
 The phype implementation aims to be fairly broad at first. Syntactic sugar will be added later.
+
+=== Library functions ===
+We have not yet found a smart solution to the problem of implementing support for PHP's extensive library functions.
