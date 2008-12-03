@@ -6,3 +6,6 @@ At the moment, assigning an array to a variable does not copy the entire array t
 
 = Referencing variables =
 Variable referencing would speed up eg. assigning an array into a variable. These have not yet been implemented.
+
+= Syntactic sugar =
+The phype implementation aims to be fairly broad at first. Syntactic sugar will be added later.
