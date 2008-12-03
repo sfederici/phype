@@ -51,6 +51,18 @@ var state = {
 	passedParams : 0,
 	
 	/**
+	 * Variable telling whether we are currently defining a class. Used for saving class definition
+	 * members correctly.
+	 */
+	inClassDef : false,
+	
+	/**
+	 * These variables keeps track of current members of the class being defined.
+	 */
+	curAttrs : [],
+	curFuns : [],
+	
+	/**
 	 * Function table
 	 */
 	funTable : {},
@@ -98,6 +110,21 @@ function VAL() {
 }
 
 /**
+ * Member object
+ */
+function MEMBER() {
+	var mod;
+	var member;
+}
+
+function CLASS() {
+	var mod;
+	var name;
+	var attrs;
+	var funs;
+}
+
+/**
  * Function for creating node objects.
  */
 function createNode( type, value, children ) {
@@ -136,6 +163,30 @@ function createValue( type, value ) {
 	v.value = value;
 	
 	return v;
+}
+
+/**
+ * Creates member objects for the class model.
+ */
+function createMember( mod, member ) {
+	var m = new MEMBER();
+	m.mod = mod;
+	m.member = member;
+	
+	return m;
+}
+
+/**
+ * Creates a class model.
+ */
+function createClass( mod, name, attrs, funs ) {
+	var c = new CLASS();
+	c.mod = mod;
+	c.name = name;
+	c.attrs = attrs;
+	c.funs = funs;
+	
+	return c;
 }
 
 
@@ -480,8 +531,6 @@ var OP_ASSIGN_ARR	= 9;
 var OP_FETCH_ARR	= 10;
 var OP_ARR_KEYS_R	= 11;
 var OP_CONCAT		= 12;
-
-
 var OP_EQU			= 50;
 var OP_NEQ			= 51;
 var OP_GRT			= 52;
@@ -494,6 +543,12 @@ var OP_DIV			= 58;
 var OP_MUL			= 59;
 var OP_NEG			= 60;
 
+var MOD_PUBLIC		= 0;
+var MOD_PROTECTED	= 1;
+var MOD_PRIVATE		= 2;
+
+var MEMBER_ATTR		= 0;
+var MEMBER_FUN		= 1;
 
 
 ////////////////
@@ -978,6 +1033,11 @@ function execute( node ) {
 	"DO"
 	"ECHO"
 	"RETURN"
+	"CLASS"							ClassToken
+	"PUBLIC"						PublicToken
+	"VAR"							VarToken
+	"PRIVATE"						PrivateToken
+	"PROTECTED"						ProtectedToken
 	'{'
 	'}'
 	'\['
@@ -1008,9 +1068,13 @@ function execute( node ) {
 	'[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\('
 									FunctionInvoke
 										[* %match = %match.substr(0,%match.length-1); *]
-	'\'([^\']|\'\')*\''				String
-										[*	%match = %match.substr(1,%match.length-2);
-											%match = %match.replace( /\\'/g, "'" ); *]
+	'[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
+									ClassName
+	'((\'[^\']*\')|("[^"]*"))'		String
+										[*
+											%match = %match.substr(1,%match.length-2);
+											%match = %match.replace( /\\'/g, "'" );
+										*]
 	'[0-9]+'						Integer
 	'[0-9]+\.[0-9]*|[0-9]*\.[0-9]+'	Float
 	'<\?([pP][hH][pP])?'			ScriptBegin
@@ -1020,23 +1084,81 @@ function execute( node ) {
 ##
 
 PHPScript:	PHPScript ScriptBegin Stmt ScriptEnd
-										[*	execute( %3 );
+										[*
+											execute( %3 );
 											if (%4.length > 2) {
 												var strNode = createNode( NODE_CONST, %4.substring(2,%4.length) );
 												execute( createNode( NODE_OP, OP_ECHO, strNode ) );
-											} *]
+											}
+										*]
 		|
 		;
 
-Stmt_List:	Stmt_List Stmt				[* %% = createNode( NODE_OP, OP_NONE, %1, %2 ); *]
+ClassDefinition:
+			ClassToken ClassName '{' Member '}'
+										[*	
+											state.inClassDef = true;
+											state.classTable[%2] =
+												createClass( MOD_PUBLIC, %2, state.curAttrs, state.curFuns );
+											state.curAttrs = [];
+											state.curFuns = [];
+											state.inClassDef = false;
+										*]
+		;
+		
+Member:		Member AttributeDefinition
+		|	Member ClassFunctionDefinition
 		|
 		;
-								
-Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
-		|	FunctionName '(' FormalParameterList ')' '{' Stmt '}'
-										[* 	state.funTable[%1] = createFunction( %1, state.curParams, %6 );
-											// Make sure to clean up param list for next function declaration
-											state.curParams = []; *]
+
+AttributeMod:
+			PublicToken					[* %% = MOD_PUBLIC; *]
+		|	VarToken					[* %% = MOD_PUBLIC; *]
+		|	ProtectedToken				[* %% = MOD_PROTECTED; *]
+		|	PrivateToken				[* %% = MOD_PRIVATE; *]
+		;
+		
+FunctionMod:
+			PublicToken					[* %% = MOD_PUBLIC; *]
+		|								[* %% = MOD_PUBLIC; *]
+		|	ProtectedToken				[* %% = MOD_PROTECTED; *]
+		|	PrivateToken				[* %% = MOD_PRIVATE; *]
+		;
+
+FunctionDefinition:
+			FunctionName '(' FormalParameterList ')' '{' Stmt '}'
+										[* 	
+											if (!state.inClassDef) {
+												state.funTable[%1] =
+													createFunction( %1, state.curParams, %6 );
+											}
+											// Make sure to clean up param list
+											// for next function declaration
+											state.curParams = [];
+										*]
+		;
+
+ClassFunctionDefinition:
+			FunctionMod FunctionName '(' FormalParameterList ')' '{' Stmt '}'
+										[* 	
+											var fun = createFunction( %2, state.curParams, %7 );
+											state.curFuns[%2] =
+												createMember( %1, fun );
+											// Make sure to clean up param list
+											// for next function declaration
+											state.curParams = [];
+										*]
+		;
+
+AttributeDefinition:
+			AttributeMod Variable ';'	[*
+											state.curAttrs[%2] = createMember( %1, %2 );
+										*]
+		;
+
+Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
+		|	ClassDefinition
+		|	FunctionDefinition
 		|	Return
 		|	Expression
 		|	IF Expression Stmt 			[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
@@ -1052,13 +1174,21 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ) *]
 		|	'{' Stmt_List '}'			[* %% = %2; *]
 		|	';'							[* %% = createNode( NODE_OP, OP_NONE ); *]
 		;
-		
+
+Stmt_List:	Stmt_List Stmt				[* %% = createNode( NODE_OP, OP_NONE, %1, %2 ); *]
+		|
+		;
+
 FormalParameterList:
 			FormalParameterList ',' Variable
-										[* state.curParams[state.curParams.length] =
-												createNode( NODE_CONST, %3 ); *]
-		|	Variable					[* state.curParams[state.curParams.length] =
-												createNode( NODE_CONST, %1 ); *]
+										[*
+											state.curParams[state.curParams.length] =
+												createNode( NODE_CONST, %3 );
+										*]
+		|	Variable					[*
+											state.curParams[state.curParams.length] =
+												createNode( NODE_CONST, %1 );
+										*]
 		|
 		;	
 
@@ -1125,12 +1255,17 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-			"<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
+			//"<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
 			//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
+			"<? " +
+			"class test {" +
+			"	private $var;" +
+			"	function hello() { echo 'hello world!'; }" +
+			"}" +
+			"?>"
 		);
 	};
 }
-
 if (!phypeOut || phypeOut == 'undefined') {
 	var phypeOut = alert;
 }
