@@ -1,4 +1,4 @@
-#summary Known shortcomings, errors and semantic differences that phype has compared to PHP.
+#summary Known shortcomings, errors, and semantic differences that phype has compared to PHP.
 #labels Phase-Design
 
 = Semantic Differences =
