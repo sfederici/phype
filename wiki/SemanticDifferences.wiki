@@ -1,0 +1,5 @@
+#summary Differences between PHP and phype that should be corrected.
+#labels Phase-Design
+
+= Floats and doubles =
+At the moment, floats and doubles are parsed exactly as in Javascript, which differs from how PHP parses and interprets doubles and floats.
