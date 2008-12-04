@@ -1,7 +1,12 @@
 #summary Conclusions of the Phype Project.
 #labels Phase-Support
 
-[PhypeDoc Back to the PhypeDoc Table of Contents]
+== Table of contents ==
+  # PhypeDoc
+  # [ThePhypeProject The Phype Project]
+  # [Implementation]
+  # [Testing]
+  # Conclusions
 
 = Conclusions =
 *Placeholder*
