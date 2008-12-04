@@ -1,5 +1,5 @@
 #summary The milestones for the Phype Project
-#labels Phase-Requirements,Deprecated
+#labels Phase-Requirements
 
 = Introduction =
 This page contains the milestones that were set for the project. Of most interest is the deprecated milestones for the initial, parsekit based, implementation of Phype, and the current milestones can also be found in the !PhypeDoc [ThePhypeProject here]. 
