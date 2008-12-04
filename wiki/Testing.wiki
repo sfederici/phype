@@ -1,7 +1,12 @@
 #summary Tests of Phype.
 #labels Phase-QA
 
-[PhypeDoc Back to the PhypeDoc Table of Contents]
+== Table of contents ==
+  # [PhypeDoc]
+  # [ThePhypeProject The Phype Project]
+  # [Implementation]
+  # Testing
+  # [Conclusions]
 
 = Testing =
 *Placeholder*
