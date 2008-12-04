@@ -28,7 +28,7 @@ As mentioned, parsekit outputs PHP scripts to an array of ZEND opcodes. During t
 These hidden variables, coupled with our array implementation, meant that we ourselves had to implement a lot of hidden variables in these arrays.
 
 === JSCC ===
-After we dropped parsekit, we looked around for another tool to help us. Here we found the JSCC Project. JSCC is a JavaScript-based parser generator, that creates a LALR(1) parser from a context-free grammar.
+After we dropped parsekit, we looked around for another tool to help us. Here we found the JSCC Project. JSCC is a !JavaScript-based parser generator, that creates a LALR(1) parser from a context-free grammar.
 
 JSCC included an example programming language, which included a small set of opcodes and a simple grammar. We took this and altered it significantly, to create a parser that would accomodate our needs.
 
