@@ -1,5 +1,7 @@
 #summary Description of the implementation of Phype
 #labels Phase-Implementation
 
+[PhypeDoc Back to the PhypeDoc Table of Contents]
+
 = Implementation =
 *Placeholder*
