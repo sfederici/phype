@@ -1,4 +1,7 @@
 #summary Conclusions of the Phype Project.
+#labels Phase-Support
+
+[PhypeDoc Back to the PhypeDoc Table of Contents]
 
 = Conclusions =
 *Placeholder*
