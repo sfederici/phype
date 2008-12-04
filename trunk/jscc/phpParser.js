@@ -51,12 +51,6 @@ var state = {
 	passedParams : 0,
 	
 	/**
-	 * Variable telling whether we are currently defining a class. Used for saving class definition
-	 * members correctly.
-	 */
-	inClassDef : false,
-	
-	/**
 	 * These variables keeps track of current members of the class being defined.
 	 */
 	curAttrs : [],
@@ -190,7 +184,9 @@ function createClass( mod, name, attrs, funs ) {
 }
 
 /**
- * Create a deep clone of a value
+ * Create a deep clone of a value.
+ * 
+ * YES, it's expensive!! So is it in PHP.
  */
 function cloneValue( value ) {
 	if(value == null || typeof(value) != 'object')
@@ -631,9 +627,21 @@ var ops = {
 		return ret;
 	},
 	
-	//OP_ASSIGN
+	// OP_ASSIGN
 	'0' : function(node) {
-		var val = execute( node.children[1] );
+		try {
+			var val = execute( node.children[1] );
+		} catch(exception) {
+			varName = linker.linkRecursively(node.children[0]);
+			// If we get an undefined variable error, and the undefined variable is the variable
+			// we are currently defining, initialize the current variable to 0, and try assigning again.
+			if (exception == varNotFound(varName)) {
+				execute( createNode( NODE_OP, OP_ASSIGN, varName, createValue( T_INT, 0 ) ) );
+				val = execute( node.children[1] );
+			} else {
+				throw exception;
+			}
+		}
 		linker.assignVar( node.children[0], val );
 		
 		return val;
@@ -948,7 +956,6 @@ var ops = {
 	'56' : function(node) {
 		var leftChild = execute(node.children[0]);
 		var rightChild = execute(node.children[1]);
-
 		var leftValue;
 		var rightValue;
 		var type = T_INT;
@@ -1125,32 +1132,34 @@ function execute( node ) {
 										*]
 	'[0-9]+'						Integer
 	'[0-9]+\.[0-9]*|[0-9]*\.[0-9]+'	Float
-	'<\?([pP][hH][pP])?'			ScriptBegin
+	'<\?'							ScriptBegin
 	'\?>(([^<\?])|<[^\?])*'			ScriptEnd
+	'\?>(([^<\?])|<[^\?])*<\?'		InternalNonScript
 	;
 
 ##
 
-PHPScript:	PHPScript ScriptBegin Stmt ScriptEnd
+PHPScript:	PHPScript Script
+		|
+		;
+		
+Script: 	ScriptBegin Stmt ScriptEnd
 										[*
-											execute( %3 );
-											if (%4.length > 2) {
-												var strNode = createNode( NODE_CONST, %4.substring(2,%4.length) );
+											execute( %2 );
+											if (%3.length > 2) {
+												var strNode = createNode( NODE_CONST, %3.substring(2,%3.length) );
 												execute( createNode( NODE_OP, OP_ECHO, strNode ) );
 											}
 										*]
-		|
 		;
 
 ClassDefinition:
 			ClassToken ClassName '{' Member '}'
 										[*	
-											state.inClassDef = true;
 											state.classTable[%2] =
 												createClass( MOD_PUBLIC, %2, state.curAttrs, state.curFuns );
 											state.curAttrs = [];
 											state.curFuns = [];
-											state.inClassDef = false;
 										*]
 		;
 		
@@ -1176,10 +1185,8 @@ FunctionMod:
 FunctionDefinition:
 			FunctionName '(' FormalParameterList ')' '{' Stmt '}'
 										[* 	
-											if (!state.inClassDef) {
-												state.funTable[%1] =
-													createFunction( %1, state.curParams, %6 );
-											}
+											state.funTable[%1] =
+												createFunction( %1, state.curParams, %6 );
 											// Make sure to clean up param list
 											// for next function declaration
 											state.curParams = [];
@@ -1205,8 +1212,6 @@ AttributeDefinition:
 		;
 
 Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
-		|	ClassDefinition
-		|	FunctionDefinition
 		|	Return
 		|	Expression
 		|	IF Expression Stmt 			[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
@@ -1217,14 +1222,18 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
 										[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
 		|	ECHO Expression ';'			[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
 		|	Variable '=' Expression ';'	[* %% = createNode( NODE_OP, OP_ASSIGN, %1, %3 ); *]
+		|	ClassDefinition
+		|	FunctionDefinition
 		|	Variable ArrayIndices '=' Expression ';'
 										[* %% = createNode( NODE_OP, OP_ASSIGN_ARR, %1, %2, %4 ); *]
-		|	'{' Stmt_List '}'			[* %% = %2; *]
+		|	'{' Stmt '}'				[* %% = %2; *]
 		|	';'							[* %% = createNode( NODE_OP, OP_NONE ); *]
-		;
-
-Stmt_List:	Stmt_List Stmt				[* %% = createNode( NODE_OP, OP_NONE, %1, %2 ); *]
-		|
+		|	InternalNonScript			[* 
+											if (%1.length > 4) {
+												var strNode = createNode( NODE_CONST, %1.substring(2,%1.length-2) );
+												%% = createNode( NODE_OP, OP_ECHO, strNode );
+											}
+										*]
 		;
 
 FormalParameterList:
@@ -1312,9 +1321,10 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
+			"<? $r = $r+1; ?>"
 			//"<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
 			//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
-			"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; ?>"
+			//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
 			/*"<? " +
 			"class test {" +
 			"	private $var;" +
@@ -1455,5 +1465,4 @@ function log(message) {
 function var_log(variable) {
 	log(var_dump(variable));
 }
-var_log(state.arrTable);
 *]
