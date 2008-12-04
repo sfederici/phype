@@ -9,10 +9,10 @@
   # [Conclusions]
 
 = The Phype Project =
-Phype is a virtual machine for PHP written in JavaScript. Using the JSCC automatic parser generator, and a context free PHP grammar, we create a LALR(1) parser for PHP. This is in turn interpreted by out interpreter, which runs PHP code directly in the browser.
+Phype is a virtual machine for PHP written in !JavaScript. Using the JSCC automatic parser generator, and a context free PHP grammar, we create a LALR(1) parser for PHP. This is in turn interpreted by out interpreter, which runs PHP code directly in the browser.
 
 == First Steps ==
-The first plan for Phype was, as the current version, based on JavaScript and the PHP-extension parsekit. Parsekit translates PHP scripts into opcode arrays, containing ZEND opcodes. These opcode arrays were then converted to JSON objects, to enable easier access.
+The first plan for Phype was, as the current version, based on !JavaScript and the PHP-extension _parsekit_. Parsekit translates PHP scripts into opcode arrays, containing ZEND opcodes. These opcode arrays were then converted to JSON objects, to enable easier access.
 
 We had a version up and running within the first week, and was able to parse, interpret and run some of the ZEND opcodes, like echoing, assignment and declaration of variables, declaration and calling of functions.
 
