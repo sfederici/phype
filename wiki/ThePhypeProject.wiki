@@ -32,6 +32,8 @@ After we dropped parsekit, we looked around for another tool to help us. Here we
 
 JSCC included an example programming language, which included a small set of opcodes and a simple grammar. We took this and altered it significantly, to create a parser that would accomodate our needs.
 
+The grammar was inspired by [http://www.phpcompiler.org/doc/latest/grammar.html PHC's abstract PHP grammar], but converted into the Bachus-Naur Form that is required for JSCC to read it, as well as rewritten to fit our implementation.
+
 JSCC gives us all the benefits of a LALR(1) parser, while giving us the possibility to create a grammer that fits our implementation perfectly. This means that our implementation is tailored specifically for PHP, and that the parser runs fast, with a worst case complexity of O(n^3^).
 
 == Planning ==
@@ -44,7 +46,7 @@ Below is an itemized list, from start to end, of the project milestones.
  * Reading PHP-code within `<script>`-tags: *Done*.
  * Parsing PHP via LALR(1)-translatable grammar: *Done*.
    * We are using JSCC for translating our version of a context free PHP grammar into a PHP-parser.
-   * We have found inspiration in [http://www.phpcompiler.org/doc/latest/grammar.html PHC's abstract PHP grammar] for our context free grammar.
+   * We have found inspiration in PHC's abstract PHP grammar for our context free grammar.
  * Interpreting PHP:
    * Echoing: *Done*.
    * Binary and unary operations: *Partially done*.
