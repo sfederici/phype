@@ -28,7 +28,11 @@ As mentioned, parsekit outputs PHP scripts to an array of ZEND opcodes. During t
 These hidden variables, coupled with our array implementation, meant that we ourselves had to implement a lot of hidden variables in these arrays.
 
 === JSCC ===
-*_Why did we choose JSCC_*
+After we dropped parsekit, we looked around for another tool to help us. Here we found the JSCC Project. JSCC is a JavaScript-based parser generator, that creates a LALR(1) parser from a context-free grammar.
+
+JSCC included an example programming language, which included a small set of opcodes and a simple grammar. We took this and altered it significantly, to create a parser that would accomodate our needs.
+
+JSCC gives us all the benefits of a LALR(1) parser, while giving us the possibility to create a grammer that fits our implementation perfectly. This means that our implementation is tailored specifically for PHP, and that the parser runs fast, with a worst case complexity of O(n^3^).
 
 == Planning ==
 This is an overview of the goals and progress of the Phype project. These milestones were adapted from the first ZEND incarnation of the project.
