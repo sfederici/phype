@@ -3,6 +3,9 @@
 // GLOBALLY USED VARS AND FUNCTIONS //
 //////////////////////////////////////
 
+// If defined, this variable tells whether we should parse and check assertions.
+var phypeTestSuite;
+var phpScripts;
 var cons = {
 	global : '.global',
 	objGlobal : '.objGlobal',
@@ -12,7 +15,7 @@ var cons = {
 	unset : '.uns#'
 }
 
-var state = {
+var pstate = {
 	/**
 	 * Sym table for looking up values.
 	 */
@@ -51,6 +54,11 @@ var state = {
 	passedParams : 0,
 	
 	/**
+	 * This variable contains the name of the class currently being defined.
+	 */
+	curDefClass : '',
+	
+	/**
 	 * These variables keeps track of current members of the class being defined.
 	 */
 	curAttrs : [],
@@ -74,38 +82,37 @@ var state = {
 	/**
 	 * Variable for keeping track of most recent return value.
 	 */
-	'return' : ''
+	'return' : '',
+	
+	/**
+	 * Keeps track of assertions.
+	 */
+	assertion : null
 }
 
-/**
- * Node object
- */
+var origState = clone(pstate);
+
+function resetState() {
+	pstate = clone(origState);
+}
+
 function NODE() {
 	var type;
 	var value;
 	var children;
 }
 
-/**
- * Function object
- */
 function FUNC() {
 	var name;
 	var params;
 	var nodes;
 }
 
-/**
- * Value object
- */
 function VAL() {
 	var type;
 	var value;
 }
 
-/**
- * Member object
- */
 function MEMBER() {
 	var mod;
 	var member;
@@ -116,6 +123,11 @@ function CLASS() {
 	var name;
 	var attrs;
 	var funs;
+}
+
+function ASSERTION() {
+	var type;
+	var value;
 }
 
 /**
@@ -188,15 +200,26 @@ function createClass( mod, name, attrs, funs ) {
  * 
  * YES, it's expensive!! So is it in PHP.
  */
-function cloneValue( value ) {
+function clone( value ) {
 	if(value == null || typeof(value) != 'object')
 		return value;
 
 	var tmp = {};
 	for(var key in value)
-		tmp[key] = cloneValue(value[key]);
+		tmp[key] = clone(value[key]);
 
 	return tmp;
+}
+
+/**
+ * Create an assertion for testing against when we are in our test suite
+ */
+function createAssertion( type, value ) {
+	var a = new ASSERTION();
+	a.type = type;
+	a.value = value;
+	
+	return a;
 }
 
 
@@ -210,59 +233,59 @@ function cloneValue( value ) {
 var linker = {
 	assignVar : function(varName, val, scope) {
 		if (!scope)
-			scope = state.curFun;
+			scope = pstate.curFun;
 
-		if (typeof(state.symTables[scope]) != 'object')
-			state.symTables[scope] = {};
+		if (typeof(pstate.symTables[scope]) != 'object')
+			pstate.symTables[scope] = {};
 
 		var refTable = linker.getRefTableByVal(val);
 		var prefix = linker.getConsDefByVal(val);
 		
-		state.symTables[scope][varName] = prefix+scope+'#'+varName
+		pstate.symTables[scope][varName] = prefix+scope+'#'+varName
 		refTable[scope+'#'+varName] = val;
 	},
 	
 	assignArr : function(varName, key, val, scope) {
 		if (!scope)
-			scope = state.curFun;
+			scope = pstate.curFun;
 		
-		if (typeof(state.symTables[scope]) != 'object')
-			state.symTables[scope] = {};
+		if (typeof(pstate.symTables[scope]) != 'object')
+			pstate.symTables[scope] = {};
 		
 		// Initialize the variable as an array
 		linker.unlinkVar(varName,scope);
-		state.symTables[scope][varName] = cons.arr+scope+'#'+varName;
+		pstate.symTables[scope][varName] = cons.arr+scope+'#'+varName;
 		
 		// Check that the entry exists. Initialize it if it does not.
 		var arrTableKey = scope+'#'+varName;
-		if (!state.arrTable[arrTableKey]) {
+		if (!pstate.arrTable[arrTableKey]) {
 			var valArr = {};
 			valArr[key.value] = val;
-			state.arrTable[arrTableKey] = createValue( T_ARRAY, valArr );
+			pstate.arrTable[arrTableKey] = createValue( T_ARRAY, valArr );
 		}
 		// Else insert the array key into the existing entry
 		else {
-			state.arrTable[arrTableKey]["value"][key.value] = val;
+			pstate.arrTable[arrTableKey]["value"][key.value] = val;
 		}
 	},
 	
 	assignArrMulti : function(varName, keys, val, scope) {
 		if (!scope)
-			scope = state.curFun;
+			scope = pstate.curFun;
 		
-		if (typeof(state.symTables[scope]) != 'object')
-			state.symTables[scope] = {};
+		if (typeof(pstate.symTables[scope]) != 'object')
+			pstate.symTables[scope] = {};
 		
 		// Initialize the variable as an array
 		linker.unlinkVar(varName,scope);
-		state.symTables[scope][varName] = cons.arr+scope+'#'+varName;
+		pstate.symTables[scope][varName] = cons.arr+scope+'#'+varName;
 		
 		// Check that the entry exists. Initialize it if it does not.
 		var arrTableKey = scope+'#'+varName;
-		if (!state.arrTable[arrTableKey])
-			state.arrTable[arrTableKey] = createValue( T_ARRAY, {} );
+		if (!pstate.arrTable[arrTableKey])
+			pstate.arrTable[arrTableKey] = createValue( T_ARRAY, {} );
 
-		var keyRef = 'state.arrTable[arrTableKey]["value"]';
+		var keyRef = 'pstate.arrTable[arrTableKey]["value"]';
 		for ( var i=0; i<keys.length; i++ ) {
 			eval('if (!'+keyRef+'["'+keys[i].value+'"]) '+keyRef+'["'+keys[i].value+'"] = createValue( T_ARRAY, {} );');
 			keyRef = keyRef+'["'+keys[i].value+'"]["value"]';
@@ -274,23 +297,23 @@ var linker = {
 
 	getValue : function(varName, scope) {
 		if (!scope)
-			scope = state.curFun;
+			scope = pstate.curFun;
 		
 		// Look up the potentially recursively defined variable.
 		varName = linker.linkRecursively(varName);
 
 		var refTable = linker.getRefTableByVar(varName);
 		
-		if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][varName])=='string') {
-			var lookupStr = state.symTables[scope][varName];
+		if (typeof(pstate.symTables[scope])=='object' && typeof(pstate.symTables[scope][varName])=='string') {
+			var lookupStr = pstate.symTables[scope][varName];
 			lookupStr = lookupStr.substr(5,lookupStr.length);
 			
-			return cloneValue(refTable[lookupStr]);
-		} else if (typeof(state.symTables[cons.global])=='string') {
-			var lookupStr = state.symTables[cons.global][cleanVarName];
+			return clone(refTable[lookupStr]);
+		} else if (typeof(pstate.symTables[cons.global])=='string') {
+			var lookupStr = pstate.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
-			return cloneValue(refTable[lookupStr]);
+			return clone(refTable[lookupStr]);
 		}
 
 		throw varNotFound(varName);
@@ -298,64 +321,64 @@ var linker = {
 	
 	getArrValue : function(varName, key, scope) {
 		if (!scope)
-			scope = state.curFun;
+			scope = pstate.curFun;
 		
 		var cleanVarName = varName.match(/[^\$]/);
 		
 		var result = '';
-		if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][cleanVarName])=='string') {
-			var prefix = state.symTables[scope][cleanVarName].substring(0,5);
+		if (typeof(pstate.symTables[scope])=='object' && typeof(pstate.symTables[scope][cleanVarName])=='string') {
+			var prefix = pstate.symTables[scope][cleanVarName].substring(0,5);
 			// THIS IS NOT COMPLIANT WITH STANDARD PHP!
 			// PHP will lookup the character at the position defined by the array key.
 			if (prefix != cons.arr) {
 				throw expectedArrNotFound(cleanVarName);
 			}
 			
-			var lookupStr = state.symTables[scope][cleanVarName];
+			var lookupStr = pstate.symTables[scope][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 
 			// Look up the value of the variable
-			if (state.arrTable[lookupStr] && state.arrTable[lookupStr]["value"][key.value])
-				result = state.arrTable[lookupStr]["value"][key.value];
-		} else if (typeof(state.symTables[cons.global])=='string') {
-			var lookupStr = state.symTables[cons.global][cleanVarName];
+			if (pstate.arrTable[lookupStr] && pstate.arrTable[lookupStr]["value"][key.value])
+				result = pstate.arrTable[lookupStr]["value"][key.value];
+		} else if (typeof(pstate.symTables[cons.global])=='string') {
+			var lookupStr = pstate.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
 			// Look up the value of the variable
-			if (state.arrTable[lookupStr] && state.arrTable[lookupStr]["value"][key.value])
-				result = state.arrTable[lookupStr]["value"][key.value];
+			if (pstate.arrTable[lookupStr] && pstate.arrTable[lookupStr]["value"][key.value])
+				result = pstate.arrTable[lookupStr]["value"][key.value];
 		} else {
 			throw varNotFound(varName);
 		}
 
 		// Look up the potentially recursively defined variable.
 		if (varName != cleanVarName) {
-			return cloneValue(linker.getValue(result));
+			return clone(linker.getValue(result));
 		} else {
-			return cloneValue(result);
+			return clone(result);
 		}
 	},
 	
 	getArrValueMulti : function(varName, keys, scope) {
 		if (!scope)
-			scope = state.curFun;
+			scope = pstate.curFun;
 		
 		var cleanVarName = varName.match(/[^\$]/);
 		
 		var result = '';
-		if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][cleanVarName])=='string') {
-			var prefix = state.symTables[scope][cleanVarName].substring(0,5);
+		if (typeof(pstate.symTables[scope])=='object' && typeof(pstate.symTables[scope][cleanVarName])=='string') {
+			var prefix = pstate.symTables[scope][cleanVarName].substring(0,5);
 			// THIS IS NOT COMPLIANT WITH STANDARD PHP!
 			// PHP will lookup the character at the position defined by the array key.
 			if (prefix != cons.arr) {
 				throw expectedArrNotFound(cleanVarName);
 			}
 			
-			var lookupStr = state.symTables[scope][cleanVarName];
+			var lookupStr = pstate.symTables[scope][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 
 			// Generate key lookup-command
-			var keyRef = 'state.arrTable[lookupStr]["value"]';
+			var keyRef = 'pstate.arrTable[lookupStr]["value"]';
 			for ( var i=0; i<keys.length; i++ ) {
 				keyRef = keyRef+'["'+keys[i].value+'"]["value"]';
 			}
@@ -363,12 +386,12 @@ var linker = {
 			// Look up the value of the variable
 			keyRef = 'result = '+keyRef+';';
 			eval(keyRef);
-		} else if (typeof(state.symTables[cons.global])=='string') {
-			var lookupStr = state.symTables[cons.global][cleanVarName];
+		} else if (typeof(pstate.symTables[cons.global])=='string') {
+			var lookupStr = pstate.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
 			// Generate key lookup-command
-			var keyRef = 'state.arrTable[lookupStr]["value"]';
+			var keyRef = 'pstate.arrTable[lookupStr]["value"]';
 			for ( var i=0; i<keys.length; i++ ) {
 				keyRef = keyRef+'["'+keys[i].value+'"]["value"]';
 			}
@@ -382,9 +405,9 @@ var linker = {
 		
 		// Look up the potentially recursively defined variable.
 		if (varName != cleanVarName) {
-			return cloneValue(linker.getValue(result));
+			return clone(linker.getValue(result));
 		} else {
-			return cloneValue(result);
+			return clone(result);
 		}
 	},
 	
@@ -392,27 +415,27 @@ var linker = {
 	 * For linking variable references (unsupported as of yet).
 	linkVar : function(locVarName, varName, scope) {
 		if (!scope)
-			scope = state.curFun;
+			scope = pstate.curFun;
 		
 		if (typeof(symTables[scope])!='object')
-			state.symTables[scope] = {};
+			pstate.symTables[scope] = {};
 		
-		state.symTables[scope][locVarName] = varName;
-		if (typeof(state.valTable[scope+'#'+varName])!='string')
-			state.valTable[scope+'#'+varName] = '';
+		pstate.symTables[scope][locVarName] = varName;
+		if (typeof(pstate.valTable[scope+'#'+varName])!='string')
+			pstate.valTable[scope+'#'+varName] = '';
 	},
 	*/
 	
 	unlinkVar : function(varName, scope) {
 		if (!scope)
-			scope = state.curFun;
+			scope = pstate.curFun;
 		
 		var prefix = linker.getConsDefByVar(varName);
 		if (prefix == cons.unset)
 			return;
 		
-		delete state.valTable[state.symTables[scope][varName]];
-		delete state.symTables[prefix+scope+'#'+varName];
+		delete pstate.valTable[pstate.symTables[scope][varName]];
+		delete pstate.symTables[prefix+scope+'#'+varName];
 	},
 	
 	getRefTableByVal : function(value) {
@@ -421,11 +444,11 @@ var linker = {
 			case T_INT:
 			case T_FLOAT:
 			case T_CONST:
-				return state.valTable;
+				return pstate.valTable;
 			case T_ARRAY:
-				return state.arrTable;
+				return pstate.arrTable;
 			case T_OBJECT:
-				return state.objTable;
+				return pstate.objTable;
 			default:
 				return null;
 		}
@@ -433,17 +456,17 @@ var linker = {
 	
 	getRefTableByVar : function(varName, scope) {
 		if (!scope)
-			scope = state.curFun;
+			scope = pstate.curFun;
 		
-		if (typeof(state.symTables[scope])!='object')
-			state.symTables[scope] = {};
+		if (typeof(pstate.symTables[scope])!='object')
+			pstate.symTables[scope] = {};
 		
 		// Get symbol name
 		var symName = '';
-		if (typeof(state.symTables[scope][varName])=='string')
-			symName = state.symTables[scope][varName];
-		else if (typeof(state.symTables[cons.global][varName])=='string')
-			symName = state.symTables[cons.global][varName];
+		if (typeof(pstate.symTables[scope][varName])=='string')
+			symName = pstate.symTables[scope][varName];
+		else if (typeof(pstate.symTables[cons.global][varName])=='string')
+			symName = pstate.symTables[cons.global][varName];
 		else
 			symName = cons.unset;
 			
@@ -451,11 +474,11 @@ var linker = {
 		// Check for sym type
 		switch (symName.substring(0,5)) {
 			case cons.val:
-				return state.valTable;
+				return pstate.valTable;
 			case cons.arr:
-				return state.arrTable;
+				return pstate.arrTable;
 			case cons.obj:
-				return state.objTable;
+				return pstate.objTable;
 			default:
 				return null;
 		}
@@ -495,22 +518,22 @@ var linker = {
 	
 	getConsDefByVar : function(varName, scope) {
 		if (!scope)
-			scope = state.curFun;
+			scope = pstate.curFun;
 		
-		if (typeof(state.symTables[scope])!='object')
-			state.symTables[scope] = {};
+		if (typeof(pstate.symTables[scope])!='object')
+			pstate.symTables[scope] = {};
 		
 		// Get symbol name
 		var symName = '';
-		if (typeof(state.symTables[scope][varName])=='string')
-			symName = state.symTables[scope][varName];
-		else if (typeof(state.symTables[cons.global][varName])=='string')
-			symName = state.symTables[cons.global][varName];
+		if (typeof(pstate.symTables[scope][varName])=='string')
+			symName = pstate.symTables[scope][varName];
+		else if (typeof(pstate.symTables[cons.global][varName])=='string')
+			symName = pstate.symTables[cons.global][varName];
 		else
 			symName = '.unset';
 		
 		return symName.substring(0,5);
-	},
+	}
 }
 
 
@@ -524,18 +547,22 @@ var classLinker = {
 /////////////////////////////
 // OP AND TYPE DEFINITIONS //
 /////////////////////////////
+
+// Value types
 var T_CONST			= 0;
 var T_ARRAY			= 1;
 var T_OBJECT		= 2;
 var T_INT			= 3;
 var T_FLOAT			= 4;
 
+// Node types
 var NODE_OP			= 0;
 var NODE_VAR		= 1;
 var NODE_CONST		= 2;
 var NODE_INT		= 3;
 var NODE_FLOAT		= 4;
 
+// Op types
 var OP_NONE			= -1;
 var OP_ASSIGN		= 0;
 var OP_IF			= 1;
@@ -563,12 +590,18 @@ var OP_MUL			= 59;
 var OP_NEG			= 60;
 var OP_CONCAT		= 61;
 
+// Moderation types
 var MOD_PUBLIC		= 0;
 var MOD_PROTECTED	= 1;
 var MOD_PRIVATE		= 2;
 
+// Member types
 var MEMBER_ATTR		= 0;
 var MEMBER_FUN		= 1;
+
+// Assertion types
+var ASS_ECHO		= 0;
+var ASS_FAIL		= 1;
 
 
 ////////////////
@@ -583,8 +616,8 @@ function funNotFound(funName) {
 }
 
 function funInvalidArgCount(argCount) {
-	return 'Function '+state.curFun+'( ) expecting '+argCount+
-			' arguments, but only found '+state.passedParams+'.';
+	return 'Function '+pstate.curFun+'( ) expecting '+argCount+
+			' arguments, but only found '+pstate.passedParams+'.';
 } 
 
 function funNameMustBeString(intType) {
@@ -683,19 +716,19 @@ var ops = {
 	
 	// OP_FCALL
 	'5' : function (node) {
-		// State preservation
-		var prevPassedParams = state.passedParams;
-		state.passedParams = 0;
+		// pstate preservation
+		var prevPassedParams = pstate.passedParams;
+		pstate.passedParams = 0;
 		
 		// Check if function name is recursively defined
 		var funName = linker.linkRecursively(node.children[0]);
 		
-		var prevFun = state.curFun;
+		var prevFun = pstate.curFun;
 		
 		if (funName.type == T_CONST)
-			state.curFun = funName.value;
+			pstate.curFun = funName.value;
 		else if (typeof(funName) == 'string') 
-			state.curFun = funName;
+			pstate.curFun = funName;
 		else 
 			throw funNameMustBeString(funName.type);
 
@@ -704,14 +737,14 @@ var ops = {
 			execute( node.children[1] );
 		
 		// Execute function
-		var f = state.funTable[state.curFun];
-		if ( f && f.params.length <= state.passedParams ) {
+		var f = pstate.funTable[pstate.curFun];
+		if ( f && f.params.length <= pstate.passedParams ) {
 			for ( var i=0; i<f.nodes.length; i++ )
 				execute( f.nodes[i] );
 		} else {
 			if (!f) {
 				throw funNotFound(funName);
-			} else if (!(f.params.length <= state.passedParams))
+			} else if (!(f.params.length <= pstate.passedParams))
 				throw funInvalidArgCount(f.params.length);
 		}
 		
@@ -719,11 +752,11 @@ var ops = {
 		for ( var i=0; i<f.params.length; i++ )
 			linker.unlinkVar( f.params[i] );
 		
-		// State roll-back
-		state.passedParams = prevPassedParams;
-		state.curFun = prevFun;
-		var ret = state['return'];
-		state['return'] = 0;
+		// pstate roll-back
+		pstate.passedParams = prevPassedParams;
+		pstate.curFun = prevFun;
+		var ret = pstate['return'];
+		pstate['return'] = 0;
 		
 		// Return the value saved in .return in our valTable.
 		return ret;
@@ -732,7 +765,7 @@ var ops = {
 	// OP_PASS_PARAM
 	'6' : function(node) {
 		// Initialize parameter name
-		var f = state.funTable[state.curFun];
+		var f = pstate.funTable[pstate.curFun];
 
 		if (!f)
 			throw funNotFound();
@@ -742,14 +775,14 @@ var ops = {
 			if ( node.children[0].value != OP_PASS_PARAM ) {
 				// Initialize parameter name
 				var paramName = '';
-				if ( state.passedParams < f.params.length )
-					paramName = f.params[state.passedParams].value;
+				if ( pstate.passedParams < f.params.length )
+					paramName = f.params[pstate.passedParams].value;
 				else
-					paramName = '.arg'+state.passedParams;
+					paramName = '.arg'+pstate.passedParams;
 
 				// Link
 				linker.assignVar( paramName, execute( node.children[0] ) );
-				state.passedParams++;
+				pstate.passedParams++;
 			} else {
 				execute( node.children[0] );
 			}
@@ -758,23 +791,23 @@ var ops = {
 		if ( node.children[1] ) {
 			// Initialize parameter name
 			var paramName = '';
-			if ( state.passedParams < f.params.length )
-				paramName = f.params[state.passedParams].value;
+			if ( pstate.passedParams < f.params.length )
+				paramName = f.params[pstate.passedParams].value;
 			else
-				paramName = '.arg'+state.passedParams;
+				paramName = '.arg'+pstate.passedParams;
 			
 			// Link
 			linker.assignVar( paramName, execute( node.children[1] ) );
-			state.passedParams++;
+			pstate.passedParams++;
 		}
 	},
 
 	// OP_RETURN
 	'7' : function(node) {
 		if (node.children[0])
-			state['return'] = execute( node.children[0] );
+			pstate['return'] = execute( node.children[0] );
 		
-		state.term = true;
+		pstate.term = true;
 	},
 
 	// OP_ECHO
@@ -860,6 +893,7 @@ var ops = {
 	// OP_OBJ_NEW
 	'12' : function(node) {
 		// Look up class in class table
+		var realClass = classTable[node.children[0]];
 		
 		// Instantiate attributes
 		
@@ -1039,8 +1073,8 @@ var ops = {
 
 function execute( node ) {
 	// Reset term-event boolean and terminate currently executing action, if a terminate-event was received.
-	if (state.term) {
-		state.term = false;
+	if (pstate.term) {
+		pstate.term = false;
 		return;
 	}
 	
@@ -1079,7 +1113,7 @@ function execute( node ) {
 
 *]
 
-!	' |\r|\n|\t'
+!	' |\n|\r|\t|\\( assertEcho ((\'[^\']*\')|("[^"]*"))\s*$| assertFail\s*$)'
 
 	"IF"
 	"ELSE"
@@ -1087,6 +1121,7 @@ function execute( node ) {
 	"DO"
 	"ECHO"
 	"RETURN"
+	"NEW"
 	"CLASS"							ClassToken
 	"PUBLIC"						PublicToken
 	"VAR"							VarToken
@@ -1102,6 +1137,8 @@ function execute( node ) {
 	'='
 	'=='
 	'!='
+	'<!'
+	'!>'
 	'<='
 	'>='
 	'>'
@@ -1114,6 +1151,7 @@ function execute( node ) {
 	'\)'
 	'->'
 	'::'
+	'//'
 	'\$[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
 									Variable
 										[* %match = %match.substr(1,%match.length-1); *]
@@ -1144,7 +1182,7 @@ PHPScript:	PHPScript Script
 		;
 		
 Script: 	ScriptBegin Stmt ScriptEnd
-										[*
+										[*	
 											execute( %2 );
 											if (%3.length > 2) {
 												var strNode = createNode( NODE_CONST, %3.substring(2,%3.length) );
@@ -1152,14 +1190,14 @@ Script: 	ScriptBegin Stmt ScriptEnd
 											}
 										*]
 		;
-
+		
 ClassDefinition:
 			ClassToken ClassName '{' Member '}'
 										[*	
-											state.classTable[%2] =
-												createClass( MOD_PUBLIC, %2, state.curAttrs, state.curFuns );
-											state.curAttrs = [];
-											state.curFuns = [];
+											pstate.classTable[%2] =
+												createClass( MOD_PUBLIC, %2, pstate.curAttrs, pstate.curFuns );
+											pstate.curAttrs = [];
+											pstate.curFuns = [];
 										*]
 		;
 		
@@ -1185,35 +1223,35 @@ FunctionMod:
 FunctionDefinition:
 			FunctionName '(' FormalParameterList ')' '{' Stmt '}'
 										[* 	
-											state.funTable[%1] =
-												createFunction( %1, state.curParams, %6 );
+											pstate.funTable[%1] =
+												createFunction( %1, pstate.curParams, %6 );
 											// Make sure to clean up param list
 											// for next function declaration
-											state.curParams = [];
+											pstate.curParams = [];
 										*]
 		;
 
 ClassFunctionDefinition:
 			FunctionMod FunctionName '(' FormalParameterList ')' '{' Stmt '}'
 										[* 	
-											var fun = createFunction( %2, state.curParams, %7 );
-											state.curFuns[%2] =
+											var fun = createFunction( %2, pstate.curParams, %7 );
+											pstate.curFuns[%2] =
 												createMember( %1, fun );
 											// Make sure to clean up param list
 											// for next function declaration
-											state.curParams = [];
+											pstate.curParams = [];
 										*]
 		;
 
 AttributeDefinition:
 			AttributeMod Variable ';'	[*
-											state.curAttrs[%2] = createMember( %1, %2 );
+											pstate.curAttrs[%2] = createMember( %1, %2 );
 										*]
 		;
 
 Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
-		|	Return
-		|	Expression
+		|	Return ';'
+		|	Expression ';'
 		|	IF Expression Stmt 			[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
 		|	IF Expression Stmt ELSE Stmt	
 										[* %% = createNode( NODE_OP, OP_IF_ELSE, %2, %3, %5 ); *]
@@ -1227,23 +1265,36 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
 		|	Variable ArrayIndices '=' Expression ';'
 										[* %% = createNode( NODE_OP, OP_ASSIGN_ARR, %1, %2, %4 ); *]
 		|	'{' Stmt '}'				[* %% = %2; *]
-		|	';'							[* %% = createNode( NODE_OP, OP_NONE ); *]
 		|	InternalNonScript			[* 
 											if (%1.length > 4) {
 												var strNode = createNode( NODE_CONST, %1.substring(2,%1.length-2) );
 												%% = createNode( NODE_OP, OP_ECHO, strNode );
 											}
 										*]
+		|	'//' AssertStmt
 		;
-
+		
+AssertStmt:	ClassName String
+										[*	
+											if (phypeTestSuite && %1 == "assertEcho") {
+												pstate.assertion = createAssertion( ASS_ECHO, %2 );
+											}
+										*]
+		|	ClassName					[*
+											if (phypeTestSuite && %1 == "assertFail") {
+												pstate.assertion = createAssertion( ASS_FAIL, 0 );
+											}
+										*]
+		|
+		;
 FormalParameterList:
 			FormalParameterList ',' Variable
 										[*
-											state.curParams[state.curParams.length] =
+											pstate.curParams[pstate.curParams.length] =
 												createNode( NODE_CONST, %3 );
 										*]
 		|	Variable					[*
-											state.curParams[state.curParams.length] =
+											pstate.curParams[pstate.curParams.length] =
 												createNode( NODE_CONST, %1 );
 										*]
 		|
@@ -1321,10 +1372,9 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		return prompt( "Please enter a PHP-script to be executed:",
-			"<? $r = $r+1; ?>"
-			//"<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
+		//	"<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
 			//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
-			//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
+			"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
 			/*"<? " +
 			"class test {" +
 			"	private $var;" +
@@ -1334,11 +1384,11 @@ if (!phypeIn || phypeIn == 'undefined') {
 		);
 	};
 }
+
+// Set phypeOut if it is not set.
 if (!phypeOut || phypeOut == 'undefined') {
 	var phypeOut = alert;
 }
-
-var str = phypeIn();
 
 /**
  * Creates an echo with non-PHP character data that precedes the first php-tag.
@@ -1359,19 +1409,72 @@ function preParse(str) {
 	return res
 }
 
-var error_cnt 	= 0;
-var error_off	= new Array();
-var error_la	= new Array();
+// If we are not in our test suite, load all the scripts all at once.
+if (!phypeTestSuite) {
+	var str = phypeIn();
 
-if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 ) {
-	for( i = 0; i < error_cnt; i++ )
-		alert( "Parse error near >" 
-			+ str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
+	var error_cnt 	= 0;
+	var error_off	= new Array();
+	var error_la	= new Array();
+	
+	if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 ) {
+		for(var i=0; i<error_cnt; i++)
+			alert( "Parse error near >" 
+				+ str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
+	}
+	
+	if (phypeDoc && phypeDoc.open) {
+		phypeDoc.close();
+	}
+}
+// If we are, parse it accordingly
+else if (phpScripts) {
+	for (var i=0; i<phpScripts.length; i++) {
+		var script = phpScripts[i];
+
+		var error_cnt 	= 0;
+		var error_off	= new Array();
+		var error_la	= new Array();
+		
+		if (i>0) __parse( preParse(script.code) );
+		
+		phypeEcho = '';
+		
+		var failed = false;
+		var thrownException = null;
+		try {
+			if( ( error_cnt = __parse( preParse(script.code), error_off, error_la ) ) > 0 ) {
+				for(var i=0; i<error_cnt; i++)
+					throw  "Parse error near >" 
+						+ script.code.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" ;
+			}
+		} catch(exception) {
+			failed = true;
+			thrownException = exception;
+		}
+
+		switch (pstate.assertion.type) {
+			case ASS_ECHO:
+				if (phypeEcho != pstate.assertion.value)
+					phypeDoc.write('"'+script.name+'" failed assertion. Expected output: "'+
+							pstate.assertion.value+'". Actual output: "'+phypeEcho+'".<br/>\n<br/>\n');
+				if (thrownException)
+					throw thrownException;
+				break;
+			case ASS_FAIL:
+				if (!failed)
+					phypeDoc.write('"'+script.name+'" failed assertion. Expected script to fail,'+
+							' but no exceptions were raised.<br/>\n<br/>\n');
+		}
+		pstate.assertion = null;
+		resetState();
+	}
+	if (phypeDoc && phypeDoc.open) {
+		phypeDoc.write('Testing done!');
+		phypeDoc.close();
+	}
 }
 
-if (phypeDoc && phypeDoc.open) {
-	phypeDoc.close();
-}
 
 ///////////////
 // DEBUGGING //

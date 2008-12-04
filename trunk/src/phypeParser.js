@@ -3,6 +3,9 @@
 // GLOBALLY USED VARS AND FUNCTIONS //
 //////////////////////////////////////
 
+// If defined, this variable tells whether we should parse and check assertions.
+var phypeTestSuite;
+var phpScripts;
 var cons = {
     global : '.global',
     objGlobal : '.objGlobal',
@@ -12,7 +15,7 @@ var cons = {
     unset : '.uns#'
 }
 
-var state = {
+var pstate = {
     /**
      * Sym table for looking up values.
      */
@@ -51,6 +54,17 @@ var state = {
     passedParams : 0,
     
     /**
+     * This variable contains the name of the class currently being defined.
+     */
+    curDefClass : '',
+    
+    /**
+     * These variables keeps track of current members of the class being defined.
+     */
+    curAttrs : [],
+    curFuns : [],
+    
+    /**
      * Function table
      */
     funTable : {},
@@ -68,31 +82,50 @@ var state = {
     /**
      * Variable for keeping track of most recent return value.
      */
-    'return' : ''
+    'return' : '',
+    
+    /**
+     * Keeps track of assertions.
+     */
+    assertion : null
 }
 
-/**
-* Node object
-*/
+var origState = clone(pstate);
+
+function resetState() {
+    pstate = clone(origState);
+}
+
 function NODE() {
     var type;
     var value;
     var children;
 }
 
-/**
-* Function object
-*/
 function FUNC() {
     var name;
     var params;
     var nodes;
 }
 
-/**
-* Value object
-*/
 function VAL() {
+    var type;
+    var value;
+}
+
+function MEMBER() {
+    var mod;
+    var member;
+}
+
+function CLASS() {
+    var mod;
+    var name;
+    var attrs;
+    var funs;
+}
+
+function ASSERTION() {
     var type;
     var value;
 }
@@ -138,6 +171,57 @@ function createValue( type, value ) {
     return v;
 }
 
+/**
+* Creates member objects for the class model.
+*/
+function createMember( mod, member ) {
+    var m = new MEMBER();
+    m.mod = mod;
+    m.member = member;
+    
+    return m;
+}
+
+/**
+* Creates a class model.
+*/
+function createClass( mod, name, attrs, funs ) {
+    var c = new CLASS();
+    c.mod = mod;
+    c.name = name;
+    c.attrs = attrs;
+    c.funs = funs;
+    
+    return c;
+}
+
+/**
+* Create a deep clone of a value.
+*
+* YES, it's expensive!! So is it in PHP.
+*/
+function clone( value ) {
+    if(value == null || typeof(value) != 'object')
+        return value;
+
+    var tmp = {};
+    for(var key in value)
+        tmp[key] = clone(value[key]);
+
+    return tmp;
+}
+
+/**
+* Create an assertion for testing against when we are in our test suite
+*/
+function createAssertion( type, value ) {
+    var a = new ASSERTION();
+    a.type = type;
+    a.value = value;
+    
+    return a;
+}
+
 
 /////////////////
 // VAR LINKING //
@@ -149,57 +233,87 @@ function createValue( type, value ) {
 var linker = {
     assignVar : function(varName, val, scope) {
         if (!scope)
-            scope = state.curFun;
+            scope = pstate.curFun;
 
-        if (typeof(state.symTables[scope]) != 'object')
-            state.symTables[scope] = {};
-        
+        if (typeof(pstate.symTables[scope]) != 'object')
+            pstate.symTables[scope] = {};
+
         var refTable = linker.getRefTableByVal(val);
         var prefix = linker.getConsDefByVal(val);
         
-        state.symTables[scope][varName] = prefix+scope+'#'+varName
+        pstate.symTables[scope][varName] = prefix+scope+'#'+varName
         refTable[scope+'#'+varName] = val;
     },
     
     assignArr : function(varName, key, val, scope) {
         if (!scope)
-            scope = state.curFun;
+            scope = pstate.curFun;
         
-        if (typeof(state.symTables[scope]) != 'object')
-            state.symTables[scope] = {};
+        if (typeof(pstate.symTables[scope]) != 'object')
+            pstate.symTables[scope] = {};
         
         // Initialize the variable as an array
         linker.unlinkVar(varName,scope);
-        state.symTables[scope][varName] = cons.arr+scope+'#'+varName;
+        pstate.symTables[scope][varName] = cons.arr+scope+'#'+varName;
         
-        // Check that the entry
+        // Check that the entry exists. Initialize it if it does not.
         var arrTableKey = scope+'#'+varName;
-        if (typeof(state.arrTable[arrTableKey]) != 'object') {
-            state.arrTable[arrTableKey] = {};
+        if (!pstate.arrTable[arrTableKey]) {
+            var valArr = {};
+            valArr[key.value] = val;
+            pstate.arrTable[arrTableKey] = createValue( T_ARRAY, valArr );
         }
-            
-        state.arrTable[arrTableKey][key.value] = val.value;
+        // Else insert the array key into the existing entry
+        else {
+            pstate.arrTable[arrTableKey]["value"][key.value] = val;
+        }
+    },
+    
+    assignArrMulti : function(varName, keys, val, scope) {
+        if (!scope)
+            scope = pstate.curFun;
+        
+        if (typeof(pstate.symTables[scope]) != 'object')
+            pstate.symTables[scope] = {};
+        
+        // Initialize the variable as an array
+        linker.unlinkVar(varName,scope);
+        pstate.symTables[scope][varName] = cons.arr+scope+'#'+varName;
+        
+        // Check that the entry exists. Initialize it if it does not.
+        var arrTableKey = scope+'#'+varName;
+        if (!pstate.arrTable[arrTableKey])
+            pstate.arrTable[arrTableKey] = createValue( T_ARRAY, {} );
+
+        var keyRef = 'pstate.arrTable[arrTableKey]["value"]';
+        for ( var i=0; i<keys.length; i++ ) {
+            eval('if (!'+keyRef+'["'+keys[i].value+'"]) '+keyRef+'["'+keys[i].value+'"] = createValue( T_ARRAY, {} );');
+            keyRef = keyRef+'["'+keys[i].value+'"]["value"]';
+        }
+
+        keyRef = keyRef+' = val;';
+        eval(keyRef);
     },
 
     getValue : function(varName, scope) {
         if (!scope)
-            scope = state.curFun;
+            scope = pstate.curFun;
         
         // Look up the potentially recursively defined variable.
         varName = linker.linkRecursively(varName);
 
         var refTable = linker.getRefTableByVar(varName);
         
-        if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][varName])=='string') {
-            var lookupStr = state.symTables[scope][varName];
+        if (typeof(pstate.symTables[scope])=='object' && typeof(pstate.symTables[scope][varName])=='string') {
+            var lookupStr = pstate.symTables[scope][varName];
             lookupStr = lookupStr.substr(5,lookupStr.length);
             
-            return refTable[lookupStr];
-        } else if (typeof(state.symTables[cons.global])=='string') {
-            var lookupStr = state.symTables[cons.global][cleanVarName];
+            return clone(refTable[lookupStr]);
+        } else if (typeof(pstate.symTables[cons.global])=='string') {
+            var lookupStr = pstate.symTables[cons.global][cleanVarName];
             lookupStr = lookupStr.substr(5, lookupStr.length);
             
-            return refTable[lookupStr];
+            return clone(refTable[lookupStr]);
         }
 
         throw varNotFound(varName);
@@ -207,77 +321,134 @@ var linker = {
     
     getArrValue : function(varName, key, scope) {
         if (!scope)
-            scope = state.curFun;
+            scope = pstate.curFun;
         
         var cleanVarName = varName.match(/[^\$]/);
         
         var result = '';
-        if (typeof(state.symTables[scope])=='object' && typeof(state.symTables[scope][cleanVarName])=='string') {
-            var prefix = state.symTables[scope][cleanVarName].substring(0,5);
+        if (typeof(pstate.symTables[scope])=='object' && typeof(pstate.symTables[scope][cleanVarName])=='string') {
+            var prefix = pstate.symTables[scope][cleanVarName].substring(0,5);
             // THIS IS NOT COMPLIANT WITH STANDARD PHP!
             // PHP will lookup the character at the position defined by the array key.
             if (prefix != cons.arr) {
                 throw expectedArrNotFound(cleanVarName);
             }
-            var lookupStr = state.symTables[scope][cleanVarName];
+            
+            var lookupStr = pstate.symTables[scope][cleanVarName];
             lookupStr = lookupStr.substr(5, lookupStr.length);
 
-            if (state.arrTable[lookupStr] && state.arrTable[lookupStr][key.value])
-                result = state.arrTable[lookupStr][key.value];
-        } else if (typeof(state.symTables[cons.global])=='string') {
-            var lookupStr = state.symTables[cons.global][cleanVarName];
+            // Look up the value of the variable
+            if (pstate.arrTable[lookupStr] && pstate.arrTable[lookupStr]["value"][key.value])
+                result = pstate.arrTable[lookupStr]["value"][key.value];
+        } else if (typeof(pstate.symTables[cons.global])=='string') {
+            var lookupStr = pstate.symTables[cons.global][cleanVarName];
             lookupStr = lookupStr.substr(5, lookupStr.length);
             
-            if (state.arrTable[lookupStr] && state.arrTable[lookupStr][key.value])
-                result = state.arrTable[lookupStr][key.value];
+            // Look up the value of the variable
+            if (pstate.arrTable[lookupStr] && pstate.arrTable[lookupStr]["value"][key.value])
+                result = pstate.arrTable[lookupStr]["value"][key.value];
+        } else {
+            throw varNotFound(varName);
+        }
+
+        // Look up the potentially recursively defined variable.
+        if (varName != cleanVarName) {
+            return clone(linker.getValue(result));
+        } else {
+            return clone(result);
+        }
+    },
+    
+    getArrValueMulti : function(varName, keys, scope) {
+        if (!scope)
+            scope = pstate.curFun;
+        
+        var cleanVarName = varName.match(/[^\$]/);
+        
+        var result = '';
+        if (typeof(pstate.symTables[scope])=='object' && typeof(pstate.symTables[scope][cleanVarName])=='string') {
+            var prefix = pstate.symTables[scope][cleanVarName].substring(0,5);
+            // THIS IS NOT COMPLIANT WITH STANDARD PHP!
+            // PHP will lookup the character at the position defined by the array key.
+            if (prefix != cons.arr) {
+                throw expectedArrNotFound(cleanVarName);
+            }
+            
+            var lookupStr = pstate.symTables[scope][cleanVarName];
+            lookupStr = lookupStr.substr(5, lookupStr.length);
+
+            // Generate key lookup-command
+            var keyRef = 'pstate.arrTable[lookupStr]["value"]';
+            for ( var i=0; i<keys.length; i++ ) {
+                keyRef = keyRef+'["'+keys[i].value+'"]["value"]';
+            }
+
+            // Look up the value of the variable
+            keyRef = 'result = '+keyRef+';';
+            eval(keyRef);
+        } else if (typeof(pstate.symTables[cons.global])=='string') {
+            var lookupStr = pstate.symTables[cons.global][cleanVarName];
+            lookupStr = lookupStr.substr(5, lookupStr.length);
+            
+            // Generate key lookup-command
+            var keyRef = 'pstate.arrTable[lookupStr]["value"]';
+            for ( var i=0; i<keys.length; i++ ) {
+                keyRef = keyRef+'["'+keys[i].value+'"]["value"]';
+            }
+            
+            // Look up the value of the variable
+            keyRef = 'result = '+keyRef+';';
+            eval(keyRef);
         } else {
             throw varNotFound(varName);
         }
         
         // Look up the potentially recursively defined variable.
         if (varName != cleanVarName) {
-            return linker.getValue(result);
+            return clone(linker.getValue(result));
         } else {
-            return result;
+            return clone(result);
         }
     },
     
     /*
-     * For linking variable references.
+     * For linking variable references (unsupported as of yet).
     linkVar : function(locVarName, varName, scope) {
         if (!scope)
-            scope = state.curFun;
+            scope = pstate.curFun;
         
         if (typeof(symTables[scope])!='object')
-            state.symTables[scope] = {};
+            pstate.symTables[scope] = {};
         
-        state.symTables[scope][locVarName] = varName;
-        if (typeof(state.valTable[scope+'#'+varName])!='string')
-            state.valTable[scope+'#'+varName] = '';
+        pstate.symTables[scope][locVarName] = varName;
+        if (typeof(pstate.valTable[scope+'#'+varName])!='string')
+            pstate.valTable[scope+'#'+varName] = '';
     },
     */
     
     unlinkVar : function(varName, scope) {
         if (!scope)
-            scope = state.curFun;
+            scope = pstate.curFun;
         
         var prefix = linker.getConsDefByVar(varName);
         if (prefix == cons.unset)
             return;
         
-        delete state.valTable[state.symTables[scope][varName]];
-        delete state.symTables[prefix+scope+'#'+varName];
+        delete pstate.valTable[pstate.symTables[scope][varName]];
+        delete pstate.symTables[prefix+scope+'#'+varName];
     },
     
     getRefTableByVal : function(value) {
         // Check for sym type
         switch (value.type) {
+            case T_INT:
+            case T_FLOAT:
             case T_CONST:
-                return state.valTable;
+                return pstate.valTable;
             case T_ARRAY:
-                return state.arrTable;
+                return pstate.arrTable;
             case T_OBJECT:
-                return state.objTable;
+                return pstate.objTable;
             default:
                 return null;
         }
@@ -285,17 +456,17 @@ var linker = {
     
     getRefTableByVar : function(varName, scope) {
         if (!scope)
-            scope = state.curFun;
+            scope = pstate.curFun;
         
-        if (typeof(state.symTables[scope])!='object')
-            state.symTables[scope] = {};
+        if (typeof(pstate.symTables[scope])!='object')
+            pstate.symTables[scope] = {};
         
         // Get symbol name
         var symName = '';
-        if (typeof(state.symTables[scope][varName])=='string')
-            symName = state.symTables[scope][varName];
-        else if (typeof(state.symTables[cons.global][varName])=='string')
-            symName = state.symTables[cons.global][varName];
+        if (typeof(pstate.symTables[scope][varName])=='string')
+            symName = pstate.symTables[scope][varName];
+        else if (typeof(pstate.symTables[cons.global][varName])=='string')
+            symName = pstate.symTables[cons.global][varName];
         else
             symName = cons.unset;
             
@@ -303,11 +474,11 @@ var linker = {
         // Check for sym type
         switch (symName.substring(0,5)) {
             case cons.val:
-                return state.valTable;
+                return pstate.valTable;
             case cons.arr:
-                return state.arrTable;
+                return pstate.arrTable;
             case cons.obj:
-                return state.objTable;
+                return pstate.objTable;
             default:
                 return null;
         }
@@ -332,6 +503,8 @@ var linker = {
     getConsDefByVal : function(val) {
         var intType = val.type;
         switch (intType) {
+            case T_INT:
+            case T_FLOAT:
             case T_CONST:
                 return cons.val;
             case T_ARRAY:
@@ -345,37 +518,51 @@ var linker = {
     
     getConsDefByVar : function(varName, scope) {
         if (!scope)
-            scope = state.curFun;
+            scope = pstate.curFun;
         
-        if (typeof(state.symTables[scope])!='object')
-            state.symTables[scope] = {};
+        if (typeof(pstate.symTables[scope])!='object')
+            pstate.symTables[scope] = {};
         
         // Get symbol name
         var symName = '';
-        if (typeof(state.symTables[scope][varName])=='string')
-            symName = state.symTables[scope][varName];
-        else if (typeof(state.symTables[cons.global][varName])=='string')
-            symName = state.symTables[cons.global][varName];
+        if (typeof(pstate.symTables[scope][varName])=='string')
+            symName = pstate.symTables[scope][varName];
+        else if (typeof(pstate.symTables[cons.global][varName])=='string')
+            symName = pstate.symTables[cons.global][varName];
         else
             symName = '.unset';
         
         return symName.substring(0,5);
-    },
+    }
+}
+
+
+
+var classLinker = {
     
 }
 
 
-////////////////////
-// OP DEFINITIONS //
-////////////////////
+
+/////////////////////////////
+// OP AND TYPE DEFINITIONS //
+/////////////////////////////
+
+// Value types
 var T_CONST            = 0;
 var T_ARRAY            = 1;
 var T_OBJECT        = 2;
+var T_INT            = 3;
+var T_FLOAT            = 4;
 
+// Node types
 var NODE_OP            = 0;
 var NODE_VAR        = 1;
 var NODE_CONST        = 2;
+var NODE_INT        = 3;
+var NODE_FLOAT        = 4;
 
+// Op types
 var OP_NONE            = -1;
 var OP_ASSIGN        = 0;
 var OP_IF            = 1;
@@ -388,8 +575,8 @@ var OP_RETURN        = 7;
 var OP_ECHO            = 8;
 var OP_ASSIGN_ARR    = 9;
 var OP_FETCH_ARR    = 10;
-
-/*
+var OP_ARR_KEYS_R    = 11;
+var OP_OBJ_FCALL    = 12;
 var OP_EQU            = 50;
 var OP_NEQ            = 51;
 var OP_GRT            = 52;
@@ -401,7 +588,20 @@ var OP_SUB            = 57;
 var OP_DIV            = 58;
 var OP_MUL            = 59;
 var OP_NEG            = 60;
-*/
+var OP_CONCAT        = 61;
+
+// Moderation types
+var MOD_PUBLIC        = 0;
+var MOD_PROTECTED    = 1;
+var MOD_PRIVATE        = 2;
+
+// Member types
+var MEMBER_ATTR        = 0;
+var MEMBER_FUN        = 1;
+
+// Assertion types
+var ASS_ECHO        = 0;
+var ASS_FAIL        = 1;
 
 
 ////////////////
@@ -416,8 +616,8 @@ function funNotFound(funName) {
 }
 
 function funInvalidArgCount(argCount) {
-    return 'Function '+state.curFun+'( ) expecting '+argCount+
-            ' arguments, but only found '+state.passedParams+'.';
+    return 'Function '+pstate.curFun+'( ) expecting '+argCount+
+            ' arguments, but only found '+pstate.passedParams+'.';
 }
 
 function funNameMustBeString(intType) {
@@ -460,9 +660,21 @@ var ops = {
         return ret;
     },
     
-    //OP_ASSIGN
+    // OP_ASSIGN
     '0' : function(node) {
-        var val = execute( node.children[1] );
+        try {
+            var val = execute( node.children[1] );
+        } catch(exception) {
+            varName = linker.linkRecursively(node.children[0]);
+            // If we get an undefined variable error, and the undefined variable is the variable
+            // we are currently defining, initialize the current variable to 0, and try assigning again.
+            if (exception == varNotFound(varName)) {
+                execute( createNode( NODE_OP, OP_ASSIGN, varName, createValue( T_INT, 0 ) ) );
+                val = execute( node.children[1] );
+            } else {
+                throw exception;
+            }
+        }
         linker.assignVar( node.children[0], val );
         
         return val;
@@ -470,8 +682,9 @@ var ops = {
     
     // OP_IF
     '1' : function(node) {
-        if( execute( node.children[0] ) )
-            return execute( node.children[1] );
+        var condChild = execute(node.children[0]);
+        if(condChild.value)
+            return execute(node.children[1]);
     },
     
     // OP_IF_ELSE
@@ -503,19 +716,19 @@ var ops = {
     
     // OP_FCALL
     '5' : function (node) {
-        // State preservation
-        var prevPassedParams = state.passedParams;
-        state.passedParams = 0;
+        // pstate preservation
+        var prevPassedParams = pstate.passedParams;
+        pstate.passedParams = 0;
         
         // Check if function name is recursively defined
         var funName = linker.linkRecursively(node.children[0]);
         
-        var prevFun = state.curFun;
+        var prevFun = pstate.curFun;
         
         if (funName.type == T_CONST)
-            state.curFun = funName.value;
+            pstate.curFun = funName.value;
         else if (typeof(funName) == 'string')
-            state.curFun = funName;
+            pstate.curFun = funName;
         else
             throw funNameMustBeString(funName.type);
 
@@ -524,14 +737,14 @@ var ops = {
             execute( node.children[1] );
         
         // Execute function
-        var f = state.funTable[state.curFun];
-        if ( f && f.params.length <= state.passedParams ) {
+        var f = pstate.funTable[pstate.curFun];
+        if ( f && f.params.length <= pstate.passedParams ) {
             for ( var i=0; i<f.nodes.length; i++ )
                 execute( f.nodes[i] );
         } else {
             if (!f) {
                 throw funNotFound(funName);
-            } else if (!(f.params.length <= state.passedParams))
+            } else if (!(f.params.length <= pstate.passedParams))
                 throw funInvalidArgCount(f.params.length);
         }
         
@@ -539,11 +752,11 @@ var ops = {
         for ( var i=0; i<f.params.length; i++ )
             linker.unlinkVar( f.params[i] );
         
-        // State roll-back
-        state.passedParams = prevPassedParams;
-        state.curFun = prevFun;
-        var ret = state['return'];
-        state['return'] = 0;
+        // pstate roll-back
+        pstate.passedParams = prevPassedParams;
+        pstate.curFun = prevFun;
+        var ret = pstate['return'];
+        pstate['return'] = 0;
         
         // Return the value saved in .return in our valTable.
         return ret;
@@ -552,7 +765,7 @@ var ops = {
     // OP_PASS_PARAM
     '6' : function(node) {
         // Initialize parameter name
-        var f = state.funTable[state.curFun];
+        var f = pstate.funTable[pstate.curFun];
 
         if (!f)
             throw funNotFound();
@@ -562,14 +775,14 @@ var ops = {
             if ( node.children[0].value != OP_PASS_PARAM ) {
                 // Initialize parameter name
                 var paramName = '';
-                if ( state.passedParams < f.params.length )
-                    paramName = f.params[state.passedParams].value;
+                if ( pstate.passedParams < f.params.length )
+                    paramName = f.params[pstate.passedParams].value;
                 else
-                    paramName = '.arg'+state.passedParams;
+                    paramName = '.arg'+pstate.passedParams;
 
                 // Link
                 linker.assignVar( paramName, execute( node.children[0] ) );
-                state.passedParams++;
+                pstate.passedParams++;
             } else {
                 execute( node.children[0] );
             }
@@ -578,23 +791,23 @@ var ops = {
         if ( node.children[1] ) {
             // Initialize parameter name
             var paramName = '';
-            if ( state.passedParams < f.params.length )
-                paramName = f.params[state.passedParams].value;
+            if ( pstate.passedParams < f.params.length )
+                paramName = f.params[pstate.passedParams].value;
             else
-                paramName = '.arg'+state.passedParams;
+                paramName = '.arg'+pstate.passedParams;
             
             // Link
             linker.assignVar( paramName, execute( node.children[1] ) );
-            state.passedParams++;
+            pstate.passedParams++;
         }
     },
 
     // OP_RETURN
     '7' : function(node) {
         if (node.children[0])
-            state['return'] = execute( node.children[0] );
+            pstate['return'] = execute( node.children[0] );
         
-        state.term = true;
+        pstate.term = true;
     },
 
     // OP_ECHO
@@ -603,6 +816,8 @@ var ops = {
         
         if (typeof(val) != 'string') {
             switch (val.type) {
+                case T_INT:
+                case T_FLOAT:
                 case T_CONST:
                     phypeOut( val.value );
                     break;
@@ -621,10 +836,15 @@ var ops = {
     // OP_ASSIGN_ARR
     '9' : function(node) {
         var varName = node.children[0];
-        var key = execute( node.children[1] );
+        var keys = execute( node.children[1] );
         var value = execute( node.children[2] );
         
-        linker.assignArr( varName, key, value );
+        // If keys is an (javascript) array, assign it as a multi-dimensional array.
+        if (typeof(keys) == 'object' && keys.length && keys.length != 'undefined')
+            linker.assignArrMulti( varName, keys, value );
+        // Otherwise, assign it ordinarily.
+        else
+            linker.assignArr( varName, keys, value );
         
         return value;
     },
@@ -632,71 +852,229 @@ var ops = {
     // OP_FETCH_ARR
     '10' : function(node) {
         var varName = node.children[0];
-        var key = execute( node.children[1] );
+        var keys = execute( node.children[1] );
         
-        return linker.getArrValue(varName, key);
-    }
+        var value = '';
+        // If keys is a JS array, fetch the value as a multi-dimensional PHP array.
+        if (typeof(keys) == 'object' && keys.length && keys.length != 'undefined')
+            value = linker.getArrValueMulti(varName, keys);
+        // Otherwise, fetch it ordinarily.
+        else {
+            value = linker.getArrValue(varName, keys);
+        }
+
+        return value;
+    },
     
-    /*// OP_EQU
+    // OP_ARR_KEYS_R
+    '11' : function(node) {
+        var arrKeys = new Array();
+        
+        if ( node.children[0] ) {
+            // If the first child contains recursive array keys, fetch the the recursively defined array keys,
+            // and join these with the existing array keys.
+            if ( node.children[0].value == OP_ARR_KEYS_R ) {
+                arrKeys.join( execute( node.children[0] ) );
+            }
+            // Otherwise, insert the array key at the end of our list of array.
+            else {
+                arrKeys.push( execute( node.children[0] ) );
+            }
+        }
+        
+        // Add the last array key (if it exists) to the list of array keys.
+        if ( node.children[1] ) {
+            arrKeys.push( execute( node.children[1] ) );
+        }
+        
+        return arrKeys;
+    },
+    
+    // OP_OBJ_NEW
+    '12' : function(node) {
+        // Look up class in class table
+        var realClass = classTable[node.children[0]];
+        
+        // Instantiate attributes
+        
+        // Get and execute constructor (if any)
+        
+        // Return the instantiated object
+    },
+    
+    // OP_OBJ_FCALL
+    '13' : function(node) {
+        var target = execute( node.children[0] );
+        
+        // Check if function name is recursively defined
+        var funName = linker.linkRecursively(node.children[0]);
+        
+        if (target.type == T_OBJECT) {
+            // Look up function in class table, execute it via OP_FCALL
+        }
+    },
+    
+    // OP_EQU
     '50' : function(node) {
-        return execute( node.children[0] ) == execute( node.children[1] );
+        var leftChild = execute(node.children[0]);
+        var rightChild = execute(node.children[1]);
+        var resultNode;
+        if (leftChild.value == rightChild.value)
+            resultNode = createValue(T_CONST, 1);
+        else
+            resultNode = createValue(T_CONST, 0);
+        return resultNode;
     },
     
     // OP_NEQ
     '51' : function(node) {
-        return execute( node.children[0] ) != execute( node.children[1] );
+        var leftChild = execute(node.children[0]);
+        var rightChild = execute(node.children[1]);
+        var resultNode;
+        if (leftChild.value != rightChild.value)
+            resultNode = createValue(T_CONST, 1);
+        else
+            resultNode = createValue(T_CONST, 0);
+        return resultNode;
     },
     
     // OP_GRT
     '52' : function(node) {
-        return execute( node.children[0] ) > execute( node.children[1] );
-    },
+        var leftChild = execute(node.children[0]);
+        var rightChild = execute(node.children[1]);
+        var resultNode;
+        if (leftChild.value > rightChild.value)
+            resultNode = createValue(T_CONST, 1);
+        else
+            resultNode = createValue(T_CONST, 0);
+        return resultNode;
+        },
     
     // OP_LOT
     '53' : function(node) {
-        return execute( node.children[0] ) < execute( node.children[1] );
+        var leftChild = execute(node.children[0]);
+        var rightChild = execute(node.children[1]);
+        var resultNode;
+        if (leftChild.value < rightChild.value)
+            resultNode = createValue(T_CONST, 1);
+        else
+            resultNode = createValue(T_CONST, 0);
+        return resultNode;
     },
     
     // OP_GRE
     '54' : function(node) {
-        return execute( node.children[0] ) >= execute( node.children[1] );
+                var leftChild = execute(node.children[0]);
+        var rightChild = execute(node.children[1]);
+        var resultNode;
+        if (leftChild.value >= rightChild.value)
+            resultNode = createValue(T_CONST, 1);
+        else
+            resultNode = createValue(T_CONST, 0);
+        return resultNode;
     },
     
     // OP_LOE
     '55' : function(node) {
-        return execute( node.children[0] ) <= execute( node.children[1] );
+        var leftChild = execute(node.children[0]);
+        var rightChild = execute(node.children[1]);
+        var resultNode;
+        if (leftChild.value <= rightChild.value)
+            resultNode = createValue(T_CONST, 1);
+        else
+            resultNode = createValue(T_CONST, 0);
+        return resultNode;
     },
     
     // OP_ADD
     '56' : function(node) {
-        return execute( node.children[0] ) + execute( node.children[1] );
+        var leftChild = execute(node.children[0]);
+        var rightChild = execute(node.children[1]);
+        var leftValue;
+        var rightValue;
+        var type = T_INT;
+        
+        switch (leftChild.type) {
+            // TODO: Check for PHP-standard.
+            case T_INT:
+            case T_CONST:
+                leftValue = parseInt(leftChild.value);
+                break;
+            case T_FLOAT:
+                leftValue = parseFloat(leftChild.value);
+                type = T_FLOAT;
+                break;
+        }
+        switch (rightChild.type) {
+            // TODO: Check for PHP-standard.
+            case T_INT:
+            case T_CONST:
+                rightValue = parseInt(rightChild.value);
+                break;
+            case T_FLOAT:
+                rightValue = parseFloat(rightChild.value);
+                type = T_FLOAT;
+                break;
+        }
+
+        var result = leftValue + rightValue;
+        var resultNode = createValue(type, result);
+
+        return resultNode;
     },
 
     // OP_SUB
     '57' : function(node) {
-        return execute( node.children[0] ) - execute( node.children[1] );
+        var leftChild = execute(node.children[0]);
+        var rightChild = execute(node.children[1]);
+        var result = leftChild.value - rightChild.value;
+        var resultNode = createValue(T_CONST, result);
+
+        return resultNode;
     },
     
     // OP_DIV
     '58' : function(node) {
-        return execute( node.children[0] ) / execute( node.children[1] );
+        var leftChild = execute(node.children[0]);
+        var rightChild = execute(node.children[1]);
+        var result = leftChild.value / rightChild.value;
+        var resultNode = createValue(T_CONST, result);
+
+        return resultNode;
     },
     
     // OP_MUL
     '59' : function(node) {
-        return execute( node.children[0] ) * execute( node.children[1] );
+        var leftChild = execute(node.children[0]);
+        var rightChild = execute(node.children[1]);
+        var result = leftChild.value * rightChild.value;
+        var resultNode = createValue(T_CONST, result);
+
+        return resultNode;
     },
     
     // OP_NEG
     '60' : function(node) {
-        return execute( node.children[0] ) * -1;
-    }*/
+        var child = execute(node.children[0]);
+        var result = -(child.value);
+        var resultNode = createValue(T_CONST, result);
+
+        return resultNode;
+    },
+    
+    // OP_CONCAT
+    '61' : function(node) {
+        var leftChild = execute( node.children[0] );
+        var rightChild = execute( node.children[1] );
+
+        return createValue( T_CONST, leftChild.value+rightChild.value );
+    }
 }
 
 function execute( node ) {
     // Reset term-event boolean and terminate currently executing action, if a terminate-event was received.
-    if (state.term) {
-        state.term = false;
+    if (pstate.term) {
+        pstate.term = false;
         return;
     }
     
@@ -720,6 +1098,14 @@ function execute( node ) {
         case NODE_CONST:
             ret = createValue( T_CONST, node.value );
             break;
+        
+        case NODE_INT:
+            ret = createValue( T_INT, node.value );
+            break;
+        
+        case NODE_FLOAT:
+            ret = createValue( T_FLOAT, node.value );
+            break;
     }
     
     return ret;
@@ -731,41 +1117,47 @@ var _dbg_withtrace = false; var _dbg_string = new String(); function __dbg_print
 function __lex( info )
 { var state = 0; var match = -1; var match_pos = 0; var start = 0; var pos = info.offset + 1; do
 { pos--; state = 0; match = -2; start = pos; if( info.src.length <= start )
-return 49; do
+return 72; do
 { switch( state )
 {
     case 0:
         if( ( info.src.charCodeAt( pos ) >= 9 && info.src.charCodeAt( pos ) <= 10 ) || info.src.charCodeAt( pos ) == 13 || info.src.charCodeAt( pos ) == 32 ) state = 1;
-        else if( info.src.charCodeAt( pos ) == 35 ) state = 2;
-        else if( info.src.charCodeAt( pos ) == 40 ) state = 3;
-        else if( info.src.charCodeAt( pos ) == 41 ) state = 4;
-        else if( info.src.charCodeAt( pos ) == 42 ) state = 5;
-        else if( info.src.charCodeAt( pos ) == 43 ) state = 6;
-        else if( info.src.charCodeAt( pos ) == 44 ) state = 7;
-        else if( info.src.charCodeAt( pos ) == 45 ) state = 8;
+        else if( info.src.charCodeAt( pos ) == 40 ) state = 2;
+        else if( info.src.charCodeAt( pos ) == 41 ) state = 3;
+        else if( info.src.charCodeAt( pos ) == 42 ) state = 4;
+        else if( info.src.charCodeAt( pos ) == 43 ) state = 5;
+        else if( info.src.charCodeAt( pos ) == 44 ) state = 6;
+        else if( info.src.charCodeAt( pos ) == 45 ) state = 7;
+        else if( info.src.charCodeAt( pos ) == 46 ) state = 8;
         else if( info.src.charCodeAt( pos ) == 47 ) state = 9;
         else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 54 ) || ( info.src.charCodeAt( pos ) >= 56 && info.src.charCodeAt( pos ) <= 57 ) ) state = 10;
-        else if( info.src.charCodeAt( pos ) == 59 ) state = 11;
-        else if( info.src.charCodeAt( pos ) == 60 ) state = 12;
-        else if( info.src.charCodeAt( pos ) == 61 ) state = 13;
-        else if( info.src.charCodeAt( pos ) == 62 ) state = 14;
-        else if( info.src.charCodeAt( pos ) == 91 ) state = 15;
-        else if( info.src.charCodeAt( pos ) == 93 ) state = 16;
-        else if( info.src.charCodeAt( pos ) == 123 ) state = 17;
-        else if( info.src.charCodeAt( pos ) == 125 ) state = 18;
-        else if( info.src.charCodeAt( pos ) == 33 ) state = 36;
-        else if( info.src.charCodeAt( pos ) == 55 ) state = 37;
-        else if( info.src.charCodeAt( pos ) == 36 ) state = 40;
-        else if( info.src.charCodeAt( pos ) == 39 ) state = 41;
-        else if( info.src.charCodeAt( pos ) == 46 ) state = 42;
-        else if( info.src.charCodeAt( pos ) == 63 ) state = 43;
-        else if( ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 67 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 72 ) || ( info.src.charCodeAt( pos ) >= 74 && info.src.charCodeAt( pos ) <= 81 ) || ( info.src.charCodeAt( pos ) >= 83 && info.src.charCodeAt( pos ) <= 86 ) || ( info.src.charCodeAt( pos ) >= 88 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 99 ) || ( info.src.charCodeAt( pos ) >= 103 && info.src.charCodeAt( pos ) <= 104 ) || ( info.src.charCodeAt( pos ) >= 106 && info.src.charCodeAt( pos ) <= 113 ) || ( info.src.charCodeAt( pos ) >= 115 && info.src.charCodeAt( pos ) <= 118 ) || ( info.src.charCodeAt( pos ) >= 120 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 68 || info.src.charCodeAt( pos ) == 100 ) state = 45;
-        else if( info.src.charCodeAt( pos ) == 73 || info.src.charCodeAt( pos ) == 105 ) state = 46;
-        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 61;
-        else if( info.src.charCodeAt( pos ) == 87 || info.src.charCodeAt( pos ) == 119 ) state = 65;
-        else if( info.src.charCodeAt( pos ) == 82 || info.src.charCodeAt( pos ) == 114 ) state = 68;
-        else if( info.src.charCodeAt( pos ) == 102 ) state = 72;
+        else if( info.src.charCodeAt( pos ) == 55 ) state = 11;
+        else if( info.src.charCodeAt( pos ) == 59 ) state = 12;
+        else if( info.src.charCodeAt( pos ) == 60 ) state = 13;
+        else if( info.src.charCodeAt( pos ) == 61 ) state = 14;
+        else if( info.src.charCodeAt( pos ) == 62 ) state = 15;
+        else if( info.src.charCodeAt( pos ) == 91 ) state = 16;
+        else if( info.src.charCodeAt( pos ) == 93 ) state = 17;
+        else if( info.src.charCodeAt( pos ) == 123 ) state = 18;
+        else if( info.src.charCodeAt( pos ) == 125 ) state = 19;
+        else if( info.src.charCodeAt( pos ) == 33 ) state = 49;
+        else if( ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 66 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 72 ) || ( info.src.charCodeAt( pos ) >= 74 && info.src.charCodeAt( pos ) <= 77 ) || info.src.charCodeAt( pos ) == 79 || info.src.charCodeAt( pos ) == 81 || ( info.src.charCodeAt( pos ) >= 83 && info.src.charCodeAt( pos ) <= 85 ) || ( info.src.charCodeAt( pos ) >= 88 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 98 ) || ( info.src.charCodeAt( pos ) >= 103 && info.src.charCodeAt( pos ) <= 104 ) || ( info.src.charCodeAt( pos ) >= 106 && info.src.charCodeAt( pos ) <= 109 ) || info.src.charCodeAt( pos ) == 111 || info.src.charCodeAt( pos ) == 113 || ( info.src.charCodeAt( pos ) >= 115 && info.src.charCodeAt( pos ) <= 117 ) || ( info.src.charCodeAt( pos ) >= 120 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 34 ) state = 52;
+        else if( info.src.charCodeAt( pos ) == 68 || info.src.charCodeAt( pos ) == 100 ) state = 53;
+        else if( info.src.charCodeAt( pos ) == 36 ) state = 54;
+        else if( info.src.charCodeAt( pos ) == 73 || info.src.charCodeAt( pos ) == 105 ) state = 55;
+        else if( info.src.charCodeAt( pos ) == 39 ) state = 56;
+        else if( info.src.charCodeAt( pos ) == 58 ) state = 58;
+        else if( info.src.charCodeAt( pos ) == 63 ) state = 60;
+        else if( info.src.charCodeAt( pos ) == 92 ) state = 62;
+        else if( info.src.charCodeAt( pos ) == 78 || info.src.charCodeAt( pos ) == 110 ) state = 91;
+        else if( info.src.charCodeAt( pos ) == 86 || info.src.charCodeAt( pos ) == 118 ) state = 93;
+        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 103;
+        else if( info.src.charCodeAt( pos ) == 67 || info.src.charCodeAt( pos ) == 99 ) state = 111;
+        else if( info.src.charCodeAt( pos ) == 87 || info.src.charCodeAt( pos ) == 119 ) state = 112;
+        else if( info.src.charCodeAt( pos ) == 80 || info.src.charCodeAt( pos ) == 112 ) state = 118;
+        else if( info.src.charCodeAt( pos ) == 82 || info.src.charCodeAt( pos ) == 114 ) state = 119;
+        else if( info.src.charCodeAt( pos ) == 102 ) state = 126;
         else state = -1;
         break;
 
@@ -777,479 +1169,931 @@ return 49; do
 
     case 2:
         state = -1;
-        match = 27;
+        match = 34;
         match_pos = pos;
         break;
 
     case 3:
         state = -1;
-        match = 25;
+        match = 35;
         match_pos = pos;
         break;
 
     case 4:
         state = -1;
-        match = 26;
+        match = 33;
         match_pos = pos;
         break;
 
     case 5:
         state = -1;
-        match = 24;
+        match = 30;
         match_pos = pos;
         break;
 
     case 6:
         state = -1;
-        match = 21;
-        match_pos = pos;
-        break;
-
-    case 7:
-        state = -1;
-        match = 13;
-        match_pos = pos;
-        break;
-
-    case 8:
-        state = -1;
-        match = 22;
-        match_pos = pos;
-        break;
-
-    case 9:
-        state = -1;
-        match = 23;
-        match_pos = pos;
-        break;
-
-    case 10:
-        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) ) state = 10;
-        else if( info.src.charCodeAt( pos ) == 46 ) state = 23;
-        else state = -1;
-        match = 32;
-        match_pos = pos;
-        break;
-
-    case 11:
-        state = -1;
-        match = 12;
-        match_pos = pos;
-        break;
-
-    case 12:
-        if( info.src.charCodeAt( pos ) == 61 ) state = 24;
-        else if( info.src.charCodeAt( pos ) == 63 ) state = 25;
-        else state = -1;
-        match = 20;
-        match_pos = pos;
-        break;
-
-    case 13:
-        if( info.src.charCodeAt( pos ) == 61 ) state = 26;
-        else state = -1;
-        match = 14;
-        match_pos = pos;
-        break;
-
-    case 14:
-        if( info.src.charCodeAt( pos ) == 61 ) state = 27;
-        else state = -1;
         match = 19;
         match_pos = pos;
         break;
 
-    case 15:
-        state = -1;
-        match = 10;
-        match_pos = pos;
-        break;
-
-    case 16:
-        state = -1;
-        match = 11;
-        match_pos = pos;
-        break;
-
-    case 17:
-        state = -1;
-        match = 8;
-        match_pos = pos;
-        break;
-
-    case 18:
-        state = -1;
-        match = 9;
-        match_pos = pos;
-        break;
-
-    case 19:
-        state = -1;
-        match = 16;
-        match_pos = pos;
-        break;
-
-    case 20:
-        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 20;
-        else state = -1;
-        match = 28;
-        match_pos = pos;
-        break;
-
-    case 21:
-        state = -1;
-        match = 30;
-        match_pos = pos;
-        break;
-
-    case 22:
-        if( info.src.charCodeAt( pos ) == 39 ) state = 41;
+    case 7:
+        if( info.src.charCodeAt( pos ) == 62 ) state = 25;
         else state = -1;
         match = 31;
         match_pos = pos;
         break;
 
-    case 23:
-        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) ) state = 23;
+    case 8:
+        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) ) state = 26;
         else state = -1;
-        match = 33;
+        match = 20;
         match_pos = pos;
         break;
 
-    case 24:
-        state = -1;
-        match = 17;
-        match_pos = pos;
-        break;
-
-    case 25:
-        if( info.src.charCodeAt( pos ) == 80 || info.src.charCodeAt( pos ) == 112 ) state = 47;
-        else state = -1;
-        match = 34;
-        match_pos = pos;
-        break;
-
-    case 26:
-        state = -1;
-        match = 15;
-        match_pos = pos;
-        break;
-
-    case 27:
-        state = -1;
-        match = 18;
-        match_pos = pos;
-        break;
-
-    case 28:
-        if( ( info.src.charCodeAt( pos ) >= 0 && info.src.charCodeAt( pos ) <= 59 ) || ( info.src.charCodeAt( pos ) >= 61 && info.src.charCodeAt( pos ) <= 62 ) || ( info.src.charCodeAt( pos ) >= 64 && info.src.charCodeAt( pos ) <= 254 ) ) state = 28;
-        else if( info.src.charCodeAt( pos ) == 60 ) state = 48;
-        else state = -1;
-        match = 35;
-        match_pos = pos;
-        break;
-
-    case 29:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else state = -1;
-        match = 5;
-        match_pos = pos;
-        break;
-
-    case 30:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else state = -1;
-        match = 2;
-        match_pos = pos;
-        break;
-
-    case 31:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else state = -1;
-        match = 6;
-        match_pos = pos;
-        break;
-
-    case 32:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else state = -1;
-        match = 3;
-        match_pos = pos;
-        break;
-
-    case 33:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else state = -1;
-        match = 4;
-        match_pos = pos;
-        break;
-
-    case 34:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else state = -1;
-        match = 7;
-        match_pos = pos;
-        break;
-
-    case 35:
-        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 35;
-        else state = -1;
-        match = 29;
-        match_pos = pos;
-        break;
-
-    case 36:
-        if( info.src.charCodeAt( pos ) == 61 ) state = 19;
-        else state = -1;
-        break;
-
-    case 37:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( info.src.charCodeAt( pos ) == 46 ) state = 23;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) ) state = 37;
-        else if( ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
+    case 9:
+        if( info.src.charCodeAt( pos ) == 47 ) state = 27;
         else state = -1;
         match = 32;
         match_pos = pos;
         break;
 
-    case 38:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 38;
+    case 10:
+        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) ) state = 10;
+        else if( info.src.charCodeAt( pos ) == 46 ) state = 26;
+        else state = -1;
+        match = 44;
+        match_pos = pos;
+        break;
+
+    case 11:
+        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) ) state = 11;
+        else if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 46 ) state = 26;
+        else if( ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 12:
+        state = -1;
+        match = 18;
+        match_pos = pos;
+        break;
+
+    case 13:
+        if( info.src.charCodeAt( pos ) == 33 ) state = 29;
+        else if( info.src.charCodeAt( pos ) == 61 ) state = 30;
+        else if( info.src.charCodeAt( pos ) == 63 ) state = 31;
+        else state = -1;
+        match = 29;
+        match_pos = pos;
+        break;
+
+    case 14:
+        if( info.src.charCodeAt( pos ) == 61 ) state = 32;
+        else state = -1;
+        match = 21;
+        match_pos = pos;
+        break;
+
+    case 15:
+        if( info.src.charCodeAt( pos ) == 61 ) state = 33;
         else state = -1;
         match = 28;
         match_pos = pos;
         break;
 
+    case 16:
+        state = -1;
+        match = 16;
+        match_pos = pos;
+        break;
+
+    case 17:
+        state = -1;
+        match = 17;
+        match_pos = pos;
+        break;
+
+    case 18:
+        state = -1;
+        match = 14;
+        match_pos = pos;
+        break;
+
+    case 19:
+        state = -1;
+        match = 15;
+        match_pos = pos;
+        break;
+
+    case 20:
+        state = -1;
+        match = 23;
+        match_pos = pos;
+        break;
+
+    case 21:
+        state = -1;
+        match = 25;
+        match_pos = pos;
+        break;
+
+    case 22:
+        state = -1;
+        match = 43;
+        match_pos = pos;
+        break;
+
+    case 23:
+        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 23;
+        else state = -1;
+        match = 39;
+        match_pos = pos;
+        break;
+
+    case 24:
+        state = -1;
+        match = 41;
+        match_pos = pos;
+        break;
+
+    case 25:
+        state = -1;
+        match = 36;
+        match_pos = pos;
+        break;
+
+    case 26:
+        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) ) state = 26;
+        else state = -1;
+        match = 45;
+        match_pos = pos;
+        break;
+
+    case 27:
+        state = -1;
+        match = 38;
+        match_pos = pos;
+        break;
+
+    case 28:
+        state = -1;
+        match = 37;
+        match_pos = pos;
+        break;
+
+    case 29:
+        state = -1;
+        match = 24;
+        match_pos = pos;
+        break;
+
+    case 30:
+        state = -1;
+        match = 26;
+        match_pos = pos;
+        break;
+
+    case 31:
+        state = -1;
+        match = 46;
+        match_pos = pos;
+        break;
+
+    case 32:
+        state = -1;
+        match = 22;
+        match_pos = pos;
+        break;
+
+    case 33:
+        state = -1;
+        match = 27;
+        match_pos = pos;
+        break;
+
+    case 34:
+        if( ( info.src.charCodeAt( pos ) >= 0 && info.src.charCodeAt( pos ) <= 59 ) || ( info.src.charCodeAt( pos ) >= 61 && info.src.charCodeAt( pos ) <= 62 ) || ( info.src.charCodeAt( pos ) >= 64 && info.src.charCodeAt( pos ) <= 254 ) ) state = 34;
+        else if( info.src.charCodeAt( pos ) == 60 ) state = 68;
+        else state = -1;
+        match = 47;
+        match_pos = pos;
+        break;
+
+    case 35:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else state = -1;
+        match = 5;
+        match_pos = pos;
+        break;
+
+    case 36:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else state = -1;
+        match = 2;
+        match_pos = pos;
+        break;
+
+    case 37:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else state = -1;
+        match = 8;
+        match_pos = pos;
+        break;
+
+    case 38:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else state = -1;
+        match = 11;
+        match_pos = pos;
+        break;
+
     case 39:
         state = -1;
-        match = 34;
+        match = 48;
         match_pos = pos;
         break;
 
     case 40:
-        if( info.src.charCodeAt( pos ) == 36 ) state = 20;
-        else if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( info.src.charCodeAt( pos ) == 55 || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 38;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 54 ) || ( info.src.charCodeAt( pos ) >= 56 && info.src.charCodeAt( pos ) <= 57 ) ) state = 44;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 6;
+        match_pos = pos;
         break;
 
     case 41:
-        if( info.src.charCodeAt( pos ) == 39 ) state = 22;
-        else if( ( info.src.charCodeAt( pos ) >= 0 && info.src.charCodeAt( pos ) <= 38 ) || ( info.src.charCodeAt( pos ) >= 40 && info.src.charCodeAt( pos ) <= 254 ) ) state = 41;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 3;
+        match_pos = pos;
         break;
 
     case 42:
-        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) ) state = 23;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 9;
+        match_pos = pos;
         break;
 
     case 43:
-        if( info.src.charCodeAt( pos ) == 62 ) state = 28;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 4;
+        match_pos = pos;
         break;
 
     case 44:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 10;
+        match_pos = pos;
         break;
 
     case 45:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( info.src.charCodeAt( pos ) == 79 || info.src.charCodeAt( pos ) == 111 ) state = 29;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 78 ) || ( info.src.charCodeAt( pos ) >= 80 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 110 ) || ( info.src.charCodeAt( pos ) >= 112 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 7;
+        match_pos = pos;
         break;
 
     case 46:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( info.src.charCodeAt( pos ) == 70 || info.src.charCodeAt( pos ) == 102 ) state = 30;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 69 ) || ( info.src.charCodeAt( pos ) >= 71 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 101 ) || ( info.src.charCodeAt( pos ) >= 103 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 12;
+        match_pos = pos;
         break;
 
     case 47:
-        if( info.src.charCodeAt( pos ) == 72 || info.src.charCodeAt( pos ) == 104 ) state = 51;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 13;
+        match_pos = pos;
         break;
 
     case 48:
-        if( ( info.src.charCodeAt( pos ) >= 0 && info.src.charCodeAt( pos ) <= 62 ) || ( info.src.charCodeAt( pos ) >= 64 && info.src.charCodeAt( pos ) <= 254 ) ) state = 28;
+        if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 48;
         else state = -1;
+        match = 40;
+        match_pos = pos;
         break;
 
     case 49:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( info.src.charCodeAt( pos ) == 79 || info.src.charCodeAt( pos ) == 111 ) state = 31;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 78 ) || ( info.src.charCodeAt( pos ) >= 80 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 110 ) || ( info.src.charCodeAt( pos ) >= 112 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
+        if( info.src.charCodeAt( pos ) == 61 ) state = 20;
+        else if( info.src.charCodeAt( pos ) == 62 ) state = 21;
         else state = -1;
         break;
 
     case 50:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 32;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 68 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 100 ) || ( info.src.charCodeAt( pos ) >= 102 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 51:
-        if( info.src.charCodeAt( pos ) == 80 || info.src.charCodeAt( pos ) == 112 ) state = 39;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 51;
         else state = -1;
+        match = 39;
+        match_pos = pos;
         break;
 
     case 52:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 33;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 68 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 100 ) || ( info.src.charCodeAt( pos ) >= 102 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
+        if( info.src.charCodeAt( pos ) == 34 ) state = 22;
+        else if( ( info.src.charCodeAt( pos ) >= 0 && info.src.charCodeAt( pos ) <= 33 ) || ( info.src.charCodeAt( pos ) >= 35 && info.src.charCodeAt( pos ) <= 254 ) ) state = 52;
         else state = -1;
         break;
 
     case 53:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( info.src.charCodeAt( pos ) == 78 || info.src.charCodeAt( pos ) == 110 ) state = 34;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 77 ) || ( info.src.charCodeAt( pos ) >= 79 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 109 ) || ( info.src.charCodeAt( pos ) >= 111 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 79 || info.src.charCodeAt( pos ) == 111 ) state = 35;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 78 ) || ( info.src.charCodeAt( pos ) >= 80 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 110 ) || ( info.src.charCodeAt( pos ) >= 112 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 54:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 32 ) state = 55;
+        if( info.src.charCodeAt( pos ) == 36 ) state = 23;
+        else if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 55 || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 51;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 54 ) || ( info.src.charCodeAt( pos ) >= 56 && info.src.charCodeAt( pos ) <= 57 ) ) state = 64;
         else state = -1;
         break;
 
     case 55:
-        if( info.src.charCodeAt( pos ) == 55 || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 35;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 70 || info.src.charCodeAt( pos ) == 102 ) state = 36;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 69 ) || ( info.src.charCodeAt( pos ) >= 71 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 101 ) || ( info.src.charCodeAt( pos ) >= 103 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 56:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 71 ) || ( info.src.charCodeAt( pos ) >= 73 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 103 ) || ( info.src.charCodeAt( pos ) >= 105 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 72 || info.src.charCodeAt( pos ) == 104 ) state = 49;
+        if( info.src.charCodeAt( pos ) == 39 ) state = 22;
+        else if( ( info.src.charCodeAt( pos ) >= 0 && info.src.charCodeAt( pos ) <= 38 ) || ( info.src.charCodeAt( pos ) >= 40 && info.src.charCodeAt( pos ) <= 254 ) ) state = 56;
         else state = -1;
         break;
 
     case 57:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 82 ) || ( info.src.charCodeAt( pos ) >= 84 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 114 ) || ( info.src.charCodeAt( pos ) >= 116 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 83 || info.src.charCodeAt( pos ) == 115 ) state = 50;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 87 || info.src.charCodeAt( pos ) == 119 ) state = 37;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 86 ) || ( info.src.charCodeAt( pos ) >= 88 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 118 ) || ( info.src.charCodeAt( pos ) >= 120 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 58:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 75 ) || ( info.src.charCodeAt( pos ) >= 77 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 107 ) || ( info.src.charCodeAt( pos ) >= 109 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 76 || info.src.charCodeAt( pos ) == 108 ) state = 52;
+        if( info.src.charCodeAt( pos ) == 58 ) state = 28;
         else state = -1;
         break;
 
     case 59:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 81 ) || ( info.src.charCodeAt( pos ) >= 83 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 113 ) || ( info.src.charCodeAt( pos ) >= 115 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 82 || info.src.charCodeAt( pos ) == 114 ) state = 53;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 82 || info.src.charCodeAt( pos ) == 114 ) state = 38;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 81 ) || ( info.src.charCodeAt( pos ) >= 83 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 113 ) || ( info.src.charCodeAt( pos ) >= 115 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 60:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 109 ) || ( info.src.charCodeAt( pos ) >= 111 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 110 ) state = 54;
+        if( info.src.charCodeAt( pos ) == 62 ) state = 34;
         else state = -1;
         break;
 
     case 61:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 66 ) || ( info.src.charCodeAt( pos ) >= 68 && info.src.charCodeAt( pos ) <= 75 ) || ( info.src.charCodeAt( pos ) >= 77 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 98 ) || ( info.src.charCodeAt( pos ) >= 100 && info.src.charCodeAt( pos ) <= 107 ) || ( info.src.charCodeAt( pos ) >= 109 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 67 || info.src.charCodeAt( pos ) == 99 ) state = 56;
-        else if( info.src.charCodeAt( pos ) == 76 || info.src.charCodeAt( pos ) == 108 ) state = 57;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 79 || info.src.charCodeAt( pos ) == 111 ) state = 40;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 78 ) || ( info.src.charCodeAt( pos ) >= 80 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 110 ) || ( info.src.charCodeAt( pos ) >= 112 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 62:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 72 ) || ( info.src.charCodeAt( pos ) >= 74 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 104 ) || ( info.src.charCodeAt( pos ) >= 106 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 73 || info.src.charCodeAt( pos ) == 105 ) state = 58;
+        if( info.src.charCodeAt( pos ) == 32 ) state = 66;
         else state = -1;
         break;
 
     case 63:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 84 ) || ( info.src.charCodeAt( pos ) >= 86 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 116 ) || ( info.src.charCodeAt( pos ) >= 118 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 85 || info.src.charCodeAt( pos ) == 117 ) state = 59;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 41;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 68 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 100 ) || ( info.src.charCodeAt( pos ) >= 102 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 64:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 110 ) || ( info.src.charCodeAt( pos ) >= 112 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 111 ) state = 60;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 64;
         else state = -1;
         break;
 
     case 65:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 71 ) || ( info.src.charCodeAt( pos ) >= 73 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 103 ) || ( info.src.charCodeAt( pos ) >= 105 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 72 || info.src.charCodeAt( pos ) == 104 ) state = 62;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 83 || info.src.charCodeAt( pos ) == 115 ) state = 42;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 82 ) || ( info.src.charCodeAt( pos ) >= 84 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 114 ) || ( info.src.charCodeAt( pos ) >= 116 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 66:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 83 ) || ( info.src.charCodeAt( pos ) >= 85 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 115 ) || ( info.src.charCodeAt( pos ) >= 117 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 84 || info.src.charCodeAt( pos ) == 116 ) state = 63;
+        if( info.src.charCodeAt( pos ) == 97 ) state = 70;
         else state = -1;
         break;
 
     case 67:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 104 ) || ( info.src.charCodeAt( pos ) >= 106 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 105 ) state = 64;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 43;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 68 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 100 ) || ( info.src.charCodeAt( pos ) >= 102 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 68:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 68 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 100 ) || ( info.src.charCodeAt( pos ) >= 102 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 66;
+        if( ( info.src.charCodeAt( pos ) >= 0 && info.src.charCodeAt( pos ) <= 62 ) || ( info.src.charCodeAt( pos ) >= 64 && info.src.charCodeAt( pos ) <= 254 ) ) state = 34;
+        else if( info.src.charCodeAt( pos ) == 63 ) state = 39;
         else state = -1;
         break;
 
     case 69:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 115 ) || ( info.src.charCodeAt( pos ) >= 117 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 116 ) state = 67;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 67 || info.src.charCodeAt( pos ) == 99 ) state = 44;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 66 ) || ( info.src.charCodeAt( pos ) >= 68 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 98 ) || ( info.src.charCodeAt( pos ) >= 100 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 70:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 98 ) || ( info.src.charCodeAt( pos ) >= 100 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 99 ) state = 69;
+        if( info.src.charCodeAt( pos ) == 115 ) state = 92;
         else state = -1;
         break;
 
     case 71:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 109 ) || ( info.src.charCodeAt( pos ) >= 111 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 110 ) state = 70;
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 78 || info.src.charCodeAt( pos ) == 110 ) state = 45;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 77 ) || ( info.src.charCodeAt( pos ) >= 79 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 109 ) || ( info.src.charCodeAt( pos ) >= 111 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
         else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
     case 72:
-        if( info.src.charCodeAt( pos ) == 40 ) state = 21;
-        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 116 ) || ( info.src.charCodeAt( pos ) >= 118 && info.src.charCodeAt( pos ) <= 122 ) ) state = 44;
-        else if( info.src.charCodeAt( pos ) == 117 ) state = 71;
+        if( info.src.charCodeAt( pos ) == 101 ) state = 74;
         else state = -1;
+        break;
+
+    case 73:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 46;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 68 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 100 ) || ( info.src.charCodeAt( pos ) >= 102 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 74:
+        if( info.src.charCodeAt( pos ) == 114 ) state = 76;
+        else state = -1;
+        break;
+
+    case 75:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( info.src.charCodeAt( pos ) == 68 || info.src.charCodeAt( pos ) == 100 ) state = 47;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 67 ) || ( info.src.charCodeAt( pos ) >= 69 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 99 ) || ( info.src.charCodeAt( pos ) >= 101 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 76:
+        if( info.src.charCodeAt( pos ) == 116 ) state = 78;
+        else state = -1;
+        break;
+
+    case 77:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 32 ) state = 81;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 78:
+        if( info.src.charCodeAt( pos ) == 69 ) state = 79;
+        else if( info.src.charCodeAt( pos ) == 70 ) state = 80;
+        else state = -1;
+        break;
+
+    case 79:
+        if( info.src.charCodeAt( pos ) == 99 ) state = 82;
+        else state = -1;
+        break;
+
+    case 80:
+        if( info.src.charCodeAt( pos ) == 97 ) state = 83;
+        else state = -1;
+        break;
+
+    case 81:
+        if( info.src.charCodeAt( pos ) == 55 || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 122 ) ) state = 48;
+        else state = -1;
+        break;
+
+    case 82:
+        if( info.src.charCodeAt( pos ) == 104 ) state = 84;
+        else state = -1;
+        break;
+
+    case 83:
+        if( info.src.charCodeAt( pos ) == 105 ) state = 85;
+        else state = -1;
+        break;
+
+    case 84:
+        if( info.src.charCodeAt( pos ) == 111 ) state = 86;
+        else state = -1;
+        break;
+
+    case 85:
+        if( info.src.charCodeAt( pos ) == 108 ) state = 87;
+        else state = -1;
+        break;
+
+    case 86:
+        if( info.src.charCodeAt( pos ) == 32 ) state = 88;
+        else state = -1;
+        break;
+
+    case 87:
+        if( info.src.charCodeAt( pos ) == 36 ) state = 1;
+        else if( info.src.charCodeAt( pos ) == 115 ) state = 87;
+        else state = -1;
+        break;
+
+    case 88:
+        if( info.src.charCodeAt( pos ) == 34 ) state = 89;
+        else if( info.src.charCodeAt( pos ) == 39 ) state = 90;
+        else state = -1;
+        break;
+
+    case 89:
+        if( info.src.charCodeAt( pos ) == 34 ) state = 87;
+        else if( ( info.src.charCodeAt( pos ) >= 0 && info.src.charCodeAt( pos ) <= 33 ) || ( info.src.charCodeAt( pos ) >= 35 && info.src.charCodeAt( pos ) <= 254 ) ) state = 89;
+        else state = -1;
+        break;
+
+    case 90:
+        if( info.src.charCodeAt( pos ) == 39 ) state = 87;
+        else if( ( info.src.charCodeAt( pos ) >= 0 && info.src.charCodeAt( pos ) <= 38 ) || ( info.src.charCodeAt( pos ) >= 40 && info.src.charCodeAt( pos ) <= 254 ) ) state = 90;
+        else state = -1;
+        break;
+
+    case 91:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 68 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 100 ) || ( info.src.charCodeAt( pos ) >= 102 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 57;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 92:
+        if( info.src.charCodeAt( pos ) == 115 ) state = 72;
+        else state = -1;
+        break;
+
+    case 93:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 66 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 98 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 65 || info.src.charCodeAt( pos ) == 97 ) state = 59;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 94:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 71 ) || ( info.src.charCodeAt( pos ) >= 73 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 103 ) || ( info.src.charCodeAt( pos ) >= 105 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 72 || info.src.charCodeAt( pos ) == 104 ) state = 61;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 95:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 82 ) || ( info.src.charCodeAt( pos ) >= 84 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 114 ) || ( info.src.charCodeAt( pos ) >= 116 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 83 || info.src.charCodeAt( pos ) == 115 ) state = 63;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 96:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 82 ) || ( info.src.charCodeAt( pos ) >= 84 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 114 ) || ( info.src.charCodeAt( pos ) >= 116 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 83 || info.src.charCodeAt( pos ) == 115 ) state = 65;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 97:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 75 ) || ( info.src.charCodeAt( pos ) >= 77 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 107 ) || ( info.src.charCodeAt( pos ) >= 109 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 76 || info.src.charCodeAt( pos ) == 108 ) state = 67;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 98:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 72 ) || ( info.src.charCodeAt( pos ) >= 74 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 104 ) || ( info.src.charCodeAt( pos ) >= 106 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 73 || info.src.charCodeAt( pos ) == 105 ) state = 69;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 99:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 81 ) || ( info.src.charCodeAt( pos ) >= 83 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 113 ) || ( info.src.charCodeAt( pos ) >= 115 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 82 || info.src.charCodeAt( pos ) == 114 ) state = 71;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 100:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 83 ) || ( info.src.charCodeAt( pos ) >= 85 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 115 ) || ( info.src.charCodeAt( pos ) >= 117 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 84 || info.src.charCodeAt( pos ) == 116 ) state = 73;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 101:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 68 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 100 ) || ( info.src.charCodeAt( pos ) >= 102 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 75;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 102:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 109 ) || ( info.src.charCodeAt( pos ) >= 111 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 110 ) state = 77;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 103:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 66 ) || ( info.src.charCodeAt( pos ) >= 68 && info.src.charCodeAt( pos ) <= 75 ) || ( info.src.charCodeAt( pos ) >= 77 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 98 ) || ( info.src.charCodeAt( pos ) >= 100 && info.src.charCodeAt( pos ) <= 107 ) || ( info.src.charCodeAt( pos ) >= 109 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 67 || info.src.charCodeAt( pos ) == 99 ) state = 94;
+        else if( info.src.charCodeAt( pos ) == 76 || info.src.charCodeAt( pos ) == 108 ) state = 95;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 104:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 66 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 98 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 65 || info.src.charCodeAt( pos ) == 97 ) state = 96;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 105:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 72 ) || ( info.src.charCodeAt( pos ) >= 74 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 104 ) || ( info.src.charCodeAt( pos ) >= 106 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 73 || info.src.charCodeAt( pos ) == 105 ) state = 97;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 106:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 75 ) || ( info.src.charCodeAt( pos ) >= 77 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 107 ) || ( info.src.charCodeAt( pos ) >= 109 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 76 || info.src.charCodeAt( pos ) == 108 ) state = 98;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 107:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 84 ) || ( info.src.charCodeAt( pos ) >= 86 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 116 ) || ( info.src.charCodeAt( pos ) >= 118 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 85 || info.src.charCodeAt( pos ) == 117 ) state = 99;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 108:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 66 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 98 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 65 || info.src.charCodeAt( pos ) == 97 ) state = 100;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 109:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 83 ) || ( info.src.charCodeAt( pos ) >= 85 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 115 ) || ( info.src.charCodeAt( pos ) >= 117 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 84 || info.src.charCodeAt( pos ) == 116 ) state = 101;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 110:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 110 ) || ( info.src.charCodeAt( pos ) >= 112 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 111 ) state = 102;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 111:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 75 ) || ( info.src.charCodeAt( pos ) >= 77 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 107 ) || ( info.src.charCodeAt( pos ) >= 109 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 76 || info.src.charCodeAt( pos ) == 108 ) state = 104;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 112:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 71 ) || ( info.src.charCodeAt( pos ) >= 73 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 103 ) || ( info.src.charCodeAt( pos ) >= 105 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 72 || info.src.charCodeAt( pos ) == 104 ) state = 105;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 113:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || info.src.charCodeAt( pos ) == 65 || ( info.src.charCodeAt( pos ) >= 67 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || info.src.charCodeAt( pos ) == 97 || ( info.src.charCodeAt( pos ) >= 99 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 66 || info.src.charCodeAt( pos ) == 98 ) state = 106;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 114:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 83 ) || ( info.src.charCodeAt( pos ) >= 85 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 115 ) || ( info.src.charCodeAt( pos ) >= 117 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 84 || info.src.charCodeAt( pos ) == 116 ) state = 107;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 115:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 85 ) || ( info.src.charCodeAt( pos ) >= 87 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 117 ) || ( info.src.charCodeAt( pos ) >= 119 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 86 || info.src.charCodeAt( pos ) == 118 ) state = 108;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 116:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 66 ) || ( info.src.charCodeAt( pos ) >= 68 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 98 ) || ( info.src.charCodeAt( pos ) >= 100 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 67 || info.src.charCodeAt( pos ) == 99 ) state = 109;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 117:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 104 ) || ( info.src.charCodeAt( pos ) >= 106 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 105 ) state = 110;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 118:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 81 ) || ( info.src.charCodeAt( pos ) >= 83 && info.src.charCodeAt( pos ) <= 84 ) || ( info.src.charCodeAt( pos ) >= 86 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 113 ) || ( info.src.charCodeAt( pos ) >= 115 && info.src.charCodeAt( pos ) <= 116 ) || ( info.src.charCodeAt( pos ) >= 118 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 85 || info.src.charCodeAt( pos ) == 117 ) state = 113;
+        else if( info.src.charCodeAt( pos ) == 82 || info.src.charCodeAt( pos ) == 114 ) state = 120;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 119:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 68 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 100 ) || ( info.src.charCodeAt( pos ) >= 102 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 114;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 120:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 72 ) || ( info.src.charCodeAt( pos ) >= 74 && info.src.charCodeAt( pos ) <= 78 ) || ( info.src.charCodeAt( pos ) >= 80 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 104 ) || ( info.src.charCodeAt( pos ) >= 106 && info.src.charCodeAt( pos ) <= 110 ) || ( info.src.charCodeAt( pos ) >= 112 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 73 || info.src.charCodeAt( pos ) == 105 ) state = 115;
+        else if( info.src.charCodeAt( pos ) == 79 || info.src.charCodeAt( pos ) == 111 ) state = 123;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 121:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 68 ) || ( info.src.charCodeAt( pos ) >= 70 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 100 ) || ( info.src.charCodeAt( pos ) >= 102 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 69 || info.src.charCodeAt( pos ) == 101 ) state = 116;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 122:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 115 ) || ( info.src.charCodeAt( pos ) >= 117 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 116 ) state = 117;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 123:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 83 ) || ( info.src.charCodeAt( pos ) >= 85 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 115 ) || ( info.src.charCodeAt( pos ) >= 117 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 84 || info.src.charCodeAt( pos ) == 116 ) state = 121;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 124:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 98 ) || ( info.src.charCodeAt( pos ) >= 100 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 99 ) state = 122;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 125:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 109 ) || ( info.src.charCodeAt( pos ) >= 111 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 110 ) state = 124;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
+        break;
+
+    case 126:
+        if( info.src.charCodeAt( pos ) == 40 ) state = 24;
+        else if( ( info.src.charCodeAt( pos ) >= 48 && info.src.charCodeAt( pos ) <= 57 ) || ( info.src.charCodeAt( pos ) >= 65 && info.src.charCodeAt( pos ) <= 90 ) || info.src.charCodeAt( pos ) == 95 || ( info.src.charCodeAt( pos ) >= 97 && info.src.charCodeAt( pos ) <= 116 ) || ( info.src.charCodeAt( pos ) >= 118 && info.src.charCodeAt( pos ) <= 122 ) ) state = 50;
+        else if( info.src.charCodeAt( pos ) == 117 ) state = 125;
+        else state = -1;
+        match = 42;
+        match_pos = pos;
         break;
 
 }
@@ -1260,28 +2104,30 @@ while( state > -1 );}
 while( 1 > -1 && match == 1 ); if( match > -1 )
 { info.att = info.src.substr( start, match_pos - start ); info.offset = match_pos; switch( match )
 {
-    case 28:
+    case 39:
         {
          info.att = info.att.substr(1,info.att.length-1);
         }
         break;
 
-    case 29:
+    case 40:
         {
          info.att = info.att.substr(9,info.att.length-1);
         }
         break;
 
-    case 30:
+    case 41:
         {
          info.att = info.att.substr(0,info.att.length-1);
         }
         break;
 
-    case 31:
+    case 43:
         {
-            info.att = info.att.substr(1,info.att.length-2);
+        
+                                            info.att = info.att.substr(1,info.att.length-2);
                                             info.att = info.att.replace( /\\'/g, "'" );
+                                        
         }
         break;
 
@@ -1296,253 +2142,366 @@ function __parse( src, err_off, err_la )
 { var sstack = new Array(); var vstack = new Array(); var err_cnt = 0; var act; var go; var la; var rval; var parseinfo = new Function( "", "var offset; var src; var att;" ); var info = new parseinfo(); /* Pop-Table */
 var pop_tab = new Array(
     new Array( 0/* PHPScript' */, 1 ),
-    new Array( 36/* PHPScript */, 4 ),
-    new Array( 36/* PHPScript */, 0 ),
-    new Array( 38/* Stmt_List */, 2 ),
-    new Array( 38/* Stmt_List */, 0 ),
-    new Array( 37/* Stmt */, 2 ),
-    new Array( 37/* Stmt */, 7 ),
-    new Array( 37/* Stmt */, 1 ),
-    new Array( 37/* Stmt */, 1 ),
-    new Array( 37/* Stmt */, 3 ),
-    new Array( 37/* Stmt */, 5 ),
-    new Array( 37/* Stmt */, 4 ),
-    new Array( 37/* Stmt */, 5 ),
-    new Array( 37/* Stmt */, 3 ),
-    new Array( 37/* Stmt */, 4 ),
-    new Array( 37/* Stmt */, 5 ),
-    new Array( 37/* Stmt */, 3 ),
-    new Array( 37/* Stmt */, 1 ),
-    new Array( 39/* FormalParameterList */, 3 ),
-    new Array( 39/* FormalParameterList */, 1 ),
-    new Array( 39/* FormalParameterList */, 0 ),
-    new Array( 40/* Return */, 2 ),
-    new Array( 40/* Return */, 1 ),
-    new Array( 41/* Expression */, 1 ),
-    new Array( 41/* Expression */, 3 ),
-    new Array( 41/* Expression */, 2 ),
-    new Array( 44/* ActualParameterList */, 3 ),
-    new Array( 44/* ActualParameterList */, 1 ),
-    new Array( 44/* ActualParameterList */, 0 ),
-    new Array( 42/* ArrayIndices */, 3 ),
-    new Array( 43/* UnaryOp */, 3 ),
-    new Array( 43/* UnaryOp */, 3 ),
-    new Array( 43/* UnaryOp */, 3 ),
-    new Array( 43/* UnaryOp */, 3 ),
-    new Array( 43/* UnaryOp */, 3 ),
-    new Array( 43/* UnaryOp */, 3 ),
-    new Array( 43/* UnaryOp */, 1 ),
-    new Array( 45/* AddSubExp */, 3 ),
-    new Array( 45/* AddSubExp */, 3 ),
-    new Array( 45/* AddSubExp */, 1 ),
-    new Array( 46/* MulDivExp */, 3 ),
-    new Array( 46/* MulDivExp */, 3 ),
-    new Array( 46/* MulDivExp */, 1 ),
-    new Array( 47/* NegExp */, 2 ),
-    new Array( 47/* NegExp */, 1 ),
-    new Array( 48/* Value */, 1 ),
-    new Array( 48/* Value */, 3 ),
-    new Array( 48/* Value */, 1 ),
-    new Array( 48/* Value */, 1 ),
-    new Array( 48/* Value */, 1 )
+    new Array( 49/* PHPScript */, 2 ),
+    new Array( 49/* PHPScript */, 0 ),
+    new Array( 50/* Script */, 3 ),
+    new Array( 53/* ClassDefinition */, 5 ),
+    new Array( 52/* Member */, 2 ),
+    new Array( 52/* Member */, 2 ),
+    new Array( 52/* Member */, 0 ),
+    new Array( 56/* AttributeMod */, 1 ),
+    new Array( 56/* AttributeMod */, 1 ),
+    new Array( 56/* AttributeMod */, 1 ),
+    new Array( 56/* AttributeMod */, 1 ),
+    new Array( 57/* FunctionMod */, 1 ),
+    new Array( 57/* FunctionMod */, 0 ),
+    new Array( 57/* FunctionMod */, 1 ),
+    new Array( 57/* FunctionMod */, 1 ),
+    new Array( 59/* FunctionDefinition */, 7 ),
+    new Array( 55/* ClassFunctionDefinition */, 8 ),
+    new Array( 54/* AttributeDefinition */, 3 ),
+    new Array( 51/* Stmt */, 2 ),
+    new Array( 51/* Stmt */, 2 ),
+    new Array( 51/* Stmt */, 2 ),
+    new Array( 51/* Stmt */, 3 ),
+    new Array( 51/* Stmt */, 5 ),
+    new Array( 51/* Stmt */, 4 ),
+    new Array( 51/* Stmt */, 5 ),
+    new Array( 51/* Stmt */, 3 ),
+    new Array( 51/* Stmt */, 4 ),
+    new Array( 51/* Stmt */, 1 ),
+    new Array( 51/* Stmt */, 1 ),
+    new Array( 51/* Stmt */, 5 ),
+    new Array( 51/* Stmt */, 3 ),
+    new Array( 51/* Stmt */, 1 ),
+    new Array( 51/* Stmt */, 2 ),
+    new Array( 63/* AssertStmt */, 2 ),
+    new Array( 63/* AssertStmt */, 1 ),
+    new Array( 63/* AssertStmt */, 0 ),
+    new Array( 58/* FormalParameterList */, 3 ),
+    new Array( 58/* FormalParameterList */, 1 ),
+    new Array( 58/* FormalParameterList */, 0 ),
+    new Array( 60/* Return */, 2 ),
+    new Array( 60/* Return */, 1 ),
+    new Array( 61/* Expression */, 3 ),
+    new Array( 61/* Expression */, 1 ),
+    new Array( 61/* Expression */, 1 ),
+    new Array( 61/* Expression */, 2 ),
+    new Array( 66/* ActualParameterList */, 3 ),
+    new Array( 66/* ActualParameterList */, 1 ),
+    new Array( 66/* ActualParameterList */, 0 ),
+    new Array( 62/* ArrayIndices */, 4 ),
+    new Array( 62/* ArrayIndices */, 3 ),
+    new Array( 65/* FunctionInvocation */, 3 ),
+    new Array( 65/* FunctionInvocation */, 5 ),
+    new Array( 67/* Target */, 1 ),
+    new Array( 64/* BinaryOp */, 3 ),
+    new Array( 64/* BinaryOp */, 3 ),
+    new Array( 64/* BinaryOp */, 3 ),
+    new Array( 64/* BinaryOp */, 3 ),
+    new Array( 64/* BinaryOp */, 3 ),
+    new Array( 64/* BinaryOp */, 3 ),
+    new Array( 64/* BinaryOp */, 3 ),
+    new Array( 64/* BinaryOp */, 1 ),
+    new Array( 68/* AddSubExp */, 3 ),
+    new Array( 68/* AddSubExp */, 3 ),
+    new Array( 68/* AddSubExp */, 1 ),
+    new Array( 69/* MulDivExp */, 3 ),
+    new Array( 69/* MulDivExp */, 3 ),
+    new Array( 69/* MulDivExp */, 1 ),
+    new Array( 70/* UnaryOp */, 2 ),
+    new Array( 70/* UnaryOp */, 1 ),
+    new Array( 71/* Value */, 1 ),
+    new Array( 71/* Value */, 3 ),
+    new Array( 71/* Value */, 1 ),
+    new Array( 71/* Value */, 1 ),
+    new Array( 71/* Value */, 1 )
 );
 
 /* Action-Table */
 var act_tab = new Array(
-    /* State 0 */ new Array( 49/* "$" */,-2 , 34/* "ScriptBegin" */,-2 ),
-    /* State 1 */ new Array( 34/* "ScriptBegin" */,2 , 49/* "$" */,0 ),
-    /* State 2 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 3 */ new Array( 35/* "ScriptEnd" */,27 , 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 4 */ new Array( 25/* "(" */,28 ),
-    /* State 5 */ new Array( 35/* "ScriptEnd" */,-7 , 29/* "FunctionName" */,-7 , 2/* "IF" */,-7 , 4/* "WHILE" */,-7 , 5/* "DO" */,-7 , 6/* "ECHO" */,-7 , 28/* "Variable" */,-7 , 8/* "{" */,-7 , 12/* ";" */,-7 , 7/* "RETURN" */,-7 , 30/* "FunctionInvoke" */,-7 , 22/* "-" */,-7 , 25/* "(" */,-7 , 31/* "String" */,-7 , 32/* "Integer" */,-7 , 33/* "Float" */,-7 , 3/* "ELSE" */,-7 , 9/* "}" */,-7 ),
-    /* State 6 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 35/* "ScriptEnd" */,-8 , 29/* "FunctionName" */,-8 , 2/* "IF" */,-8 , 4/* "WHILE" */,-8 , 5/* "DO" */,-8 , 6/* "ECHO" */,-8 , 28/* "Variable" */,-8 , 8/* "{" */,-8 , 12/* ";" */,-8 , 7/* "RETURN" */,-8 , 30/* "FunctionInvoke" */,-8 , 22/* "-" */,-8 , 25/* "(" */,-8 , 31/* "String" */,-8 , 32/* "Integer" */,-8 , 33/* "Float" */,-8 , 3/* "ELSE" */,-8 , 9/* "}" */,-8 ),
-    /* State 7 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 8 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 9 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 10 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 11 */ new Array( 14/* "=" */,41 , 10/* "[" */,42 , 35/* "ScriptEnd" */,-45 , 29/* "FunctionName" */,-45 , 2/* "IF" */,-45 , 4/* "WHILE" */,-45 , 5/* "DO" */,-45 , 6/* "ECHO" */,-45 , 28/* "Variable" */,-45 , 8/* "{" */,-45 , 12/* ";" */,-45 , 7/* "RETURN" */,-45 , 30/* "FunctionInvoke" */,-45 , 22/* "-" */,-45 , 25/* "(" */,-45 , 31/* "String" */,-45 , 32/* "Integer" */,-45 , 33/* "Float" */,-45 , 21/* "+" */,-45 , 24/* "*" */,-45 , 23/* "/" */,-45 , 15/* "==" */,-45 , 20/* "<" */,-45 , 19/* ">" */,-45 , 17/* "<=" */,-45 , 18/* ">=" */,-45 , 16/* "!=" */,-45 , 3/* "ELSE" */,-45 , 9/* "}" */,-45 ),
-    /* State 12 */ new Array( 9/* "}" */,-4 , 29/* "FunctionName" */,-4 , 2/* "IF" */,-4 , 4/* "WHILE" */,-4 , 5/* "DO" */,-4 , 6/* "ECHO" */,-4 , 28/* "Variable" */,-4 , 8/* "{" */,-4 , 12/* ";" */,-4 , 7/* "RETURN" */,-4 , 30/* "FunctionInvoke" */,-4 , 22/* "-" */,-4 , 25/* "(" */,-4 , 31/* "String" */,-4 , 32/* "Integer" */,-4 , 33/* "Float" */,-4 ),
-    /* State 13 */ new Array( 35/* "ScriptEnd" */,-17 , 29/* "FunctionName" */,-17 , 2/* "IF" */,-17 , 4/* "WHILE" */,-17 , 5/* "DO" */,-17 , 6/* "ECHO" */,-17 , 28/* "Variable" */,-17 , 8/* "{" */,-17 , 12/* ";" */,-17 , 7/* "RETURN" */,-17 , 30/* "FunctionInvoke" */,-17 , 22/* "-" */,-17 , 25/* "(" */,-17 , 31/* "String" */,-17 , 32/* "Integer" */,-17 , 33/* "Float" */,-17 , 3/* "ELSE" */,-17 , 9/* "}" */,-17 ),
-    /* State 14 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 35/* "ScriptEnd" */,-22 , 29/* "FunctionName" */,-22 , 2/* "IF" */,-22 , 4/* "WHILE" */,-22 , 5/* "DO" */,-22 , 6/* "ECHO" */,-22 , 8/* "{" */,-22 , 12/* ";" */,-22 , 7/* "RETURN" */,-22 , 3/* "ELSE" */,-22 , 9/* "}" */,-22 ),
-    /* State 15 */ new Array( 35/* "ScriptEnd" */,-23 , 29/* "FunctionName" */,-23 , 2/* "IF" */,-23 , 4/* "WHILE" */,-23 , 5/* "DO" */,-23 , 6/* "ECHO" */,-23 , 28/* "Variable" */,-23 , 8/* "{" */,-23 , 12/* ";" */,-23 , 7/* "RETURN" */,-23 , 30/* "FunctionInvoke" */,-23 , 22/* "-" */,-23 , 25/* "(" */,-23 , 31/* "String" */,-23 , 32/* "Integer" */,-23 , 33/* "Float" */,-23 , 15/* "==" */,-23 , 20/* "<" */,-23 , 19/* ">" */,-23 , 17/* "<=" */,-23 , 18/* ">=" */,-23 , 16/* "!=" */,-23 , 26/* ")" */,-23 , 13/* "," */,-23 , 3/* "ELSE" */,-23 , 11/* "]" */,-23 , 9/* "}" */,-23 ),
-    /* State 16 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 26/* ")" */,-28 , 13/* "," */,-28 ),
-    /* State 17 */ new Array( 21/* "+" */,47 , 22/* "-" */,48 , 35/* "ScriptEnd" */,-36 , 29/* "FunctionName" */,-36 , 2/* "IF" */,-36 , 4/* "WHILE" */,-36 , 5/* "DO" */,-36 , 6/* "ECHO" */,-36 , 28/* "Variable" */,-36 , 8/* "{" */,-36 , 12/* ";" */,-36 , 7/* "RETURN" */,-36 , 30/* "FunctionInvoke" */,-36 , 25/* "(" */,-36 , 31/* "String" */,-36 , 32/* "Integer" */,-36 , 33/* "Float" */,-36 , 15/* "==" */,-36 , 20/* "<" */,-36 , 19/* ">" */,-36 , 17/* "<=" */,-36 , 18/* ">=" */,-36 , 16/* "!=" */,-36 , 26/* ")" */,-36 , 13/* "," */,-36 , 3/* "ELSE" */,-36 , 11/* "]" */,-36 , 9/* "}" */,-36 ),
-    /* State 18 */ new Array( 23/* "/" */,49 , 24/* "*" */,50 , 35/* "ScriptEnd" */,-39 , 29/* "FunctionName" */,-39 , 2/* "IF" */,-39 , 4/* "WHILE" */,-39 , 5/* "DO" */,-39 , 6/* "ECHO" */,-39 , 28/* "Variable" */,-39 , 8/* "{" */,-39 , 12/* ";" */,-39 , 7/* "RETURN" */,-39 , 30/* "FunctionInvoke" */,-39 , 22/* "-" */,-39 , 25/* "(" */,-39 , 31/* "String" */,-39 , 32/* "Integer" */,-39 , 33/* "Float" */,-39 , 21/* "+" */,-39 , 15/* "==" */,-39 , 20/* "<" */,-39 , 19/* ">" */,-39 , 17/* "<=" */,-39 , 18/* ">=" */,-39 , 16/* "!=" */,-39 , 26/* ")" */,-39 , 13/* "," */,-39 , 3/* "ELSE" */,-39 , 11/* "]" */,-39 , 9/* "}" */,-39 ),
-    /* State 19 */ new Array( 35/* "ScriptEnd" */,-42 , 29/* "FunctionName" */,-42 , 2/* "IF" */,-42 , 4/* "WHILE" */,-42 , 5/* "DO" */,-42 , 6/* "ECHO" */,-42 , 28/* "Variable" */,-42 , 8/* "{" */,-42 , 12/* ";" */,-42 , 7/* "RETURN" */,-42 , 30/* "FunctionInvoke" */,-42 , 22/* "-" */,-42 , 25/* "(" */,-42 , 31/* "String" */,-42 , 32/* "Integer" */,-42 , 33/* "Float" */,-42 , 21/* "+" */,-42 , 24/* "*" */,-42 , 23/* "/" */,-42 , 15/* "==" */,-42 , 20/* "<" */,-42 , 19/* ">" */,-42 , 17/* "<=" */,-42 , 18/* ">=" */,-42 , 16/* "!=" */,-42 , 26/* ")" */,-42 , 13/* "," */,-42 , 3/* "ELSE" */,-42 , 11/* "]" */,-42 , 9/* "}" */,-42 ),
-    /* State 20 */ new Array( 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 21 */ new Array( 35/* "ScriptEnd" */,-44 , 29/* "FunctionName" */,-44 , 2/* "IF" */,-44 , 4/* "WHILE" */,-44 , 5/* "DO" */,-44 , 6/* "ECHO" */,-44 , 28/* "Variable" */,-44 , 8/* "{" */,-44 , 12/* ";" */,-44 , 7/* "RETURN" */,-44 , 30/* "FunctionInvoke" */,-44 , 22/* "-" */,-44 , 25/* "(" */,-44 , 31/* "String" */,-44 , 32/* "Integer" */,-44 , 33/* "Float" */,-44 , 21/* "+" */,-44 , 24/* "*" */,-44 , 23/* "/" */,-44 , 15/* "==" */,-44 , 20/* "<" */,-44 , 19/* ">" */,-44 , 17/* "<=" */,-44 , 18/* ">=" */,-44 , 16/* "!=" */,-44 , 26/* ")" */,-44 , 13/* "," */,-44 , 3/* "ELSE" */,-44 , 11/* "]" */,-44 , 9/* "}" */,-44 ),
-    /* State 22 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 23 */ new Array( 35/* "ScriptEnd" */,-47 , 29/* "FunctionName" */,-47 , 2/* "IF" */,-47 , 4/* "WHILE" */,-47 , 5/* "DO" */,-47 , 6/* "ECHO" */,-47 , 28/* "Variable" */,-47 , 8/* "{" */,-47 , 12/* ";" */,-47 , 7/* "RETURN" */,-47 , 30/* "FunctionInvoke" */,-47 , 22/* "-" */,-47 , 25/* "(" */,-47 , 31/* "String" */,-47 , 32/* "Integer" */,-47 , 33/* "Float" */,-47 , 21/* "+" */,-47 , 24/* "*" */,-47 , 23/* "/" */,-47 , 15/* "==" */,-47 , 20/* "<" */,-47 , 19/* ">" */,-47 , 17/* "<=" */,-47 , 18/* ">=" */,-47 , 16/* "!=" */,-47 , 26/* ")" */,-47 , 13/* "," */,-47 , 3/* "ELSE" */,-47 , 11/* "]" */,-47 , 9/* "}" */,-47 ),
-    /* State 24 */ new Array( 35/* "ScriptEnd" */,-48 , 29/* "FunctionName" */,-48 , 2/* "IF" */,-48 , 4/* "WHILE" */,-48 , 5/* "DO" */,-48 , 6/* "ECHO" */,-48 , 28/* "Variable" */,-48 , 8/* "{" */,-48 , 12/* ";" */,-48 , 7/* "RETURN" */,-48 , 30/* "FunctionInvoke" */,-48 , 22/* "-" */,-48 , 25/* "(" */,-48 , 31/* "String" */,-48 , 32/* "Integer" */,-48 , 33/* "Float" */,-48 , 21/* "+" */,-48 , 24/* "*" */,-48 , 23/* "/" */,-48 , 15/* "==" */,-48 , 20/* "<" */,-48 , 19/* ">" */,-48 , 17/* "<=" */,-48 , 18/* ">=" */,-48 , 16/* "!=" */,-48 , 26/* ")" */,-48 , 13/* "," */,-48 , 3/* "ELSE" */,-48 , 11/* "]" */,-48 , 9/* "}" */,-48 ),
-    /* State 25 */ new Array( 35/* "ScriptEnd" */,-49 , 29/* "FunctionName" */,-49 , 2/* "IF" */,-49 , 4/* "WHILE" */,-49 , 5/* "DO" */,-49 , 6/* "ECHO" */,-49 , 28/* "Variable" */,-49 , 8/* "{" */,-49 , 12/* ";" */,-49 , 7/* "RETURN" */,-49 , 30/* "FunctionInvoke" */,-49 , 22/* "-" */,-49 , 25/* "(" */,-49 , 31/* "String" */,-49 , 32/* "Integer" */,-49 , 33/* "Float" */,-49 , 21/* "+" */,-49 , 24/* "*" */,-49 , 23/* "/" */,-49 , 15/* "==" */,-49 , 20/* "<" */,-49 , 19/* ">" */,-49 , 17/* "<=" */,-49 , 18/* ">=" */,-49 , 16/* "!=" */,-49 , 26/* ")" */,-49 , 13/* "," */,-49 , 3/* "ELSE" */,-49 , 11/* "]" */,-49 , 9/* "}" */,-49 ),
-    /* State 26 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 35/* "ScriptEnd" */,-5 , 3/* "ELSE" */,-5 , 9/* "}" */,-5 ),
-    /* State 27 */ new Array( 49/* "$" */,-1 , 34/* "ScriptBegin" */,-1 ),
-    /* State 28 */ new Array( 28/* "Variable" */,55 , 26/* ")" */,-20 , 13/* "," */,-20 ),
-    /* State 29 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 30 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 31 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 32 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 33 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 34 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 35 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 36 */ new Array( 10/* "[" */,42 , 29/* "FunctionName" */,-45 , 2/* "IF" */,-45 , 4/* "WHILE" */,-45 , 5/* "DO" */,-45 , 6/* "ECHO" */,-45 , 28/* "Variable" */,-45 , 8/* "{" */,-45 , 12/* ";" */,-45 , 7/* "RETURN" */,-45 , 30/* "FunctionInvoke" */,-45 , 22/* "-" */,-45 , 25/* "(" */,-45 , 31/* "String" */,-45 , 32/* "Integer" */,-45 , 33/* "Float" */,-45 , 21/* "+" */,-45 , 24/* "*" */,-45 , 23/* "/" */,-45 , 15/* "==" */,-45 , 20/* "<" */,-45 , 19/* ">" */,-45 , 17/* "<=" */,-45 , 18/* ">=" */,-45 , 16/* "!=" */,-45 , 35/* "ScriptEnd" */,-45 , 26/* ")" */,-45 , 13/* "," */,-45 , 3/* "ELSE" */,-45 , 11/* "]" */,-45 , 9/* "}" */,-45 ),
-    /* State 37 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 5/* "DO" */,64 ),
-    /* State 38 */ new Array( 4/* "WHILE" */,65 , 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 39 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 12/* ";" */,66 ),
-    /* State 40 */ new Array( 14/* "=" */,67 , 35/* "ScriptEnd" */,-25 , 29/* "FunctionName" */,-25 , 2/* "IF" */,-25 , 4/* "WHILE" */,-25 , 5/* "DO" */,-25 , 6/* "ECHO" */,-25 , 28/* "Variable" */,-25 , 8/* "{" */,-25 , 12/* ";" */,-25 , 7/* "RETURN" */,-25 , 30/* "FunctionInvoke" */,-25 , 22/* "-" */,-25 , 25/* "(" */,-25 , 31/* "String" */,-25 , 32/* "Integer" */,-25 , 33/* "Float" */,-25 , 15/* "==" */,-25 , 20/* "<" */,-25 , 19/* ">" */,-25 , 17/* "<=" */,-25 , 18/* ">=" */,-25 , 16/* "!=" */,-25 , 3/* "ELSE" */,-25 , 9/* "}" */,-25 ),
-    /* State 41 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 42 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 43 */ new Array( 9/* "}" */,71 , 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 44 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 35/* "ScriptEnd" */,-21 , 29/* "FunctionName" */,-21 , 2/* "IF" */,-21 , 4/* "WHILE" */,-21 , 5/* "DO" */,-21 , 6/* "ECHO" */,-21 , 28/* "Variable" */,-21 , 8/* "{" */,-21 , 12/* ";" */,-21 , 7/* "RETURN" */,-21 , 30/* "FunctionInvoke" */,-21 , 22/* "-" */,-21 , 25/* "(" */,-21 , 31/* "String" */,-21 , 32/* "Integer" */,-21 , 33/* "Float" */,-21 , 3/* "ELSE" */,-21 , 9/* "}" */,-21 ),
-    /* State 45 */ new Array( 13/* "," */,72 , 26/* ")" */,73 ),
-    /* State 46 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 26/* ")" */,-27 , 13/* "," */,-27 ),
-    /* State 47 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 48 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 49 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 50 */ new Array( 22/* "-" */,20 , 28/* "Variable" */,52 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 51 */ new Array( 35/* "ScriptEnd" */,-43 , 29/* "FunctionName" */,-43 , 2/* "IF" */,-43 , 4/* "WHILE" */,-43 , 5/* "DO" */,-43 , 6/* "ECHO" */,-43 , 28/* "Variable" */,-43 , 8/* "{" */,-43 , 12/* ";" */,-43 , 7/* "RETURN" */,-43 , 30/* "FunctionInvoke" */,-43 , 22/* "-" */,-43 , 25/* "(" */,-43 , 31/* "String" */,-43 , 32/* "Integer" */,-43 , 33/* "Float" */,-43 , 21/* "+" */,-43 , 24/* "*" */,-43 , 23/* "/" */,-43 , 15/* "==" */,-43 , 20/* "<" */,-43 , 19/* ">" */,-43 , 17/* "<=" */,-43 , 18/* ">=" */,-43 , 16/* "!=" */,-43 , 26/* ")" */,-43 , 13/* "," */,-43 , 3/* "ELSE" */,-43 , 11/* "]" */,-43 , 9/* "}" */,-43 ),
-    /* State 52 */ new Array( 35/* "ScriptEnd" */,-45 , 29/* "FunctionName" */,-45 , 2/* "IF" */,-45 , 4/* "WHILE" */,-45 , 5/* "DO" */,-45 , 6/* "ECHO" */,-45 , 28/* "Variable" */,-45 , 8/* "{" */,-45 , 12/* ";" */,-45 , 7/* "RETURN" */,-45 , 30/* "FunctionInvoke" */,-45 , 22/* "-" */,-45 , 25/* "(" */,-45 , 31/* "String" */,-45 , 32/* "Integer" */,-45 , 33/* "Float" */,-45 , 21/* "+" */,-45 , 24/* "*" */,-45 , 23/* "/" */,-45 , 15/* "==" */,-45 , 20/* "<" */,-45 , 19/* ">" */,-45 , 17/* "<=" */,-45 , 18/* ">=" */,-45 , 16/* "!=" */,-45 , 26/* ")" */,-45 , 13/* "," */,-45 , 3/* "ELSE" */,-45 , 11/* "]" */,-45 , 9/* "}" */,-45 ),
-    /* State 53 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 26/* ")" */,78 ),
-    /* State 54 */ new Array( 13/* "," */,79 , 26/* ")" */,80 ),
-    /* State 55 */ new Array( 26/* ")" */,-19 , 13/* "," */,-19 ),
-    /* State 56 */ new Array( 21/* "+" */,47 , 22/* "-" */,48 , 35/* "ScriptEnd" */,-35 , 29/* "FunctionName" */,-35 , 2/* "IF" */,-35 , 4/* "WHILE" */,-35 , 5/* "DO" */,-35 , 6/* "ECHO" */,-35 , 28/* "Variable" */,-35 , 8/* "{" */,-35 , 12/* ";" */,-35 , 7/* "RETURN" */,-35 , 30/* "FunctionInvoke" */,-35 , 25/* "(" */,-35 , 31/* "String" */,-35 , 32/* "Integer" */,-35 , 33/* "Float" */,-35 , 15/* "==" */,-35 , 20/* "<" */,-35 , 19/* ">" */,-35 , 17/* "<=" */,-35 , 18/* ">=" */,-35 , 16/* "!=" */,-35 , 3/* "ELSE" */,-35 , 9/* "}" */,-35 , 26/* ")" */,-35 , 13/* "," */,-35 , 11/* "]" */,-35 ),
-    /* State 57 */ new Array( 21/* "+" */,47 , 22/* "-" */,48 , 35/* "ScriptEnd" */,-34 , 29/* "FunctionName" */,-34 , 2/* "IF" */,-34 , 4/* "WHILE" */,-34 , 5/* "DO" */,-34 , 6/* "ECHO" */,-34 , 28/* "Variable" */,-34 , 8/* "{" */,-34 , 12/* ";" */,-34 , 7/* "RETURN" */,-34 , 30/* "FunctionInvoke" */,-34 , 25/* "(" */,-34 , 31/* "String" */,-34 , 32/* "Integer" */,-34 , 33/* "Float" */,-34 , 15/* "==" */,-34 , 20/* "<" */,-34 , 19/* ">" */,-34 , 17/* "<=" */,-34 , 18/* ">=" */,-34 , 16/* "!=" */,-34 , 3/* "ELSE" */,-34 , 9/* "}" */,-34 , 26/* ")" */,-34 , 13/* "," */,-34 , 11/* "]" */,-34 ),
-    /* State 58 */ new Array( 21/* "+" */,47 , 22/* "-" */,48 , 35/* "ScriptEnd" */,-33 , 29/* "FunctionName" */,-33 , 2/* "IF" */,-33 , 4/* "WHILE" */,-33 , 5/* "DO" */,-33 , 6/* "ECHO" */,-33 , 28/* "Variable" */,-33 , 8/* "{" */,-33 , 12/* ";" */,-33 , 7/* "RETURN" */,-33 , 30/* "FunctionInvoke" */,-33 , 25/* "(" */,-33 , 31/* "String" */,-33 , 32/* "Integer" */,-33 , 33/* "Float" */,-33 , 15/* "==" */,-33 , 20/* "<" */,-33 , 19/* ">" */,-33 , 17/* "<=" */,-33 , 18/* ">=" */,-33 , 16/* "!=" */,-33 , 3/* "ELSE" */,-33 , 9/* "}" */,-33 , 26/* ")" */,-33 , 13/* "," */,-33 , 11/* "]" */,-33 ),
-    /* State 59 */ new Array( 21/* "+" */,47 , 22/* "-" */,48 , 35/* "ScriptEnd" */,-32 , 29/* "FunctionName" */,-32 , 2/* "IF" */,-32 , 4/* "WHILE" */,-32 , 5/* "DO" */,-32 , 6/* "ECHO" */,-32 , 28/* "Variable" */,-32 , 8/* "{" */,-32 , 12/* ";" */,-32 , 7/* "RETURN" */,-32 , 30/* "FunctionInvoke" */,-32 , 25/* "(" */,-32 , 31/* "String" */,-32 , 32/* "Integer" */,-32 , 33/* "Float" */,-32 , 15/* "==" */,-32 , 20/* "<" */,-32 , 19/* ">" */,-32 , 17/* "<=" */,-32 , 18/* ">=" */,-32 , 16/* "!=" */,-32 , 3/* "ELSE" */,-32 , 9/* "}" */,-32 , 26/* ")" */,-32 , 13/* "," */,-32 , 11/* "]" */,-32 ),
-    /* State 60 */ new Array( 21/* "+" */,47 , 22/* "-" */,48 , 35/* "ScriptEnd" */,-31 , 29/* "FunctionName" */,-31 , 2/* "IF" */,-31 , 4/* "WHILE" */,-31 , 5/* "DO" */,-31 , 6/* "ECHO" */,-31 , 28/* "Variable" */,-31 , 8/* "{" */,-31 , 12/* ";" */,-31 , 7/* "RETURN" */,-31 , 30/* "FunctionInvoke" */,-31 , 25/* "(" */,-31 , 31/* "String" */,-31 , 32/* "Integer" */,-31 , 33/* "Float" */,-31 , 15/* "==" */,-31 , 20/* "<" */,-31 , 19/* ">" */,-31 , 17/* "<=" */,-31 , 18/* ">=" */,-31 , 16/* "!=" */,-31 , 3/* "ELSE" */,-31 , 9/* "}" */,-31 , 26/* ")" */,-31 , 13/* "," */,-31 , 11/* "]" */,-31 ),
-    /* State 61 */ new Array( 21/* "+" */,47 , 22/* "-" */,48 , 35/* "ScriptEnd" */,-30 , 29/* "FunctionName" */,-30 , 2/* "IF" */,-30 , 4/* "WHILE" */,-30 , 5/* "DO" */,-30 , 6/* "ECHO" */,-30 , 28/* "Variable" */,-30 , 8/* "{" */,-30 , 12/* ";" */,-30 , 7/* "RETURN" */,-30 , 30/* "FunctionInvoke" */,-30 , 25/* "(" */,-30 , 31/* "String" */,-30 , 32/* "Integer" */,-30 , 33/* "Float" */,-30 , 15/* "==" */,-30 , 20/* "<" */,-30 , 19/* ">" */,-30 , 17/* "<=" */,-30 , 18/* ">=" */,-30 , 16/* "!=" */,-30 , 3/* "ELSE" */,-30 , 9/* "}" */,-30 , 26/* ")" */,-30 , 13/* "," */,-30 , 11/* "]" */,-30 ),
-    /* State 62 */ new Array( 3/* "ELSE" */,81 , 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 35/* "ScriptEnd" */,-9 , 9/* "}" */,-9 ),
-    /* State 63 */ new Array( 29/* "FunctionName" */,-25 , 2/* "IF" */,-25 , 4/* "WHILE" */,-25 , 5/* "DO" */,-25 , 6/* "ECHO" */,-25 , 28/* "Variable" */,-25 , 8/* "{" */,-25 , 12/* ";" */,-25 , 7/* "RETURN" */,-25 , 30/* "FunctionInvoke" */,-25 , 22/* "-" */,-25 , 25/* "(" */,-25 , 31/* "String" */,-25 , 32/* "Integer" */,-25 , 33/* "Float" */,-25 , 15/* "==" */,-25 , 20/* "<" */,-25 , 19/* ">" */,-25 , 17/* "<=" */,-25 , 18/* ">=" */,-25 , 16/* "!=" */,-25 , 35/* "ScriptEnd" */,-25 , 26/* ")" */,-25 , 13/* "," */,-25 , 3/* "ELSE" */,-25 , 11/* "]" */,-25 , 9/* "}" */,-25 ),
-    /* State 64 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 65 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 66 */ new Array( 35/* "ScriptEnd" */,-13 , 29/* "FunctionName" */,-13 , 2/* "IF" */,-13 , 4/* "WHILE" */,-13 , 5/* "DO" */,-13 , 6/* "ECHO" */,-13 , 28/* "Variable" */,-13 , 8/* "{" */,-13 , 12/* ";" */,-13 , 7/* "RETURN" */,-13 , 30/* "FunctionInvoke" */,-13 , 22/* "-" */,-13 , 25/* "(" */,-13 , 31/* "String" */,-13 , 32/* "Integer" */,-13 , 33/* "Float" */,-13 , 3/* "ELSE" */,-13 , 9/* "}" */,-13 ),
-    /* State 67 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 68 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 12/* ";" */,85 ),
-    /* State 69 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 11/* "]" */,86 ),
-    /* State 70 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 9/* "}" */,-3 ),
-    /* State 71 */ new Array( 35/* "ScriptEnd" */,-16 , 29/* "FunctionName" */,-16 , 2/* "IF" */,-16 , 4/* "WHILE" */,-16 , 5/* "DO" */,-16 , 6/* "ECHO" */,-16 , 28/* "Variable" */,-16 , 8/* "{" */,-16 , 12/* ";" */,-16 , 7/* "RETURN" */,-16 , 30/* "FunctionInvoke" */,-16 , 22/* "-" */,-16 , 25/* "(" */,-16 , 31/* "String" */,-16 , 32/* "Integer" */,-16 , 33/* "Float" */,-16 , 3/* "ELSE" */,-16 , 9/* "}" */,-16 ),
-    /* State 72 */ new Array( 30/* "FunctionInvoke" */,16 , 28/* "Variable" */,36 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 73 */ new Array( 35/* "ScriptEnd" */,-24 , 29/* "FunctionName" */,-24 , 2/* "IF" */,-24 , 4/* "WHILE" */,-24 , 5/* "DO" */,-24 , 6/* "ECHO" */,-24 , 28/* "Variable" */,-24 , 8/* "{" */,-24 , 12/* ";" */,-24 , 7/* "RETURN" */,-24 , 30/* "FunctionInvoke" */,-24 , 22/* "-" */,-24 , 25/* "(" */,-24 , 31/* "String" */,-24 , 32/* "Integer" */,-24 , 33/* "Float" */,-24 , 15/* "==" */,-24 , 20/* "<" */,-24 , 19/* ">" */,-24 , 17/* "<=" */,-24 , 18/* ">=" */,-24 , 16/* "!=" */,-24 , 26/* ")" */,-24 , 13/* "," */,-24 , 3/* "ELSE" */,-24 , 11/* "]" */,-24 , 9/* "}" */,-24 ),
-    /* State 74 */ new Array( 23/* "/" */,49 , 24/* "*" */,50 , 35/* "ScriptEnd" */,-38 , 29/* "FunctionName" */,-38 , 2/* "IF" */,-38 , 4/* "WHILE" */,-38 , 5/* "DO" */,-38 , 6/* "ECHO" */,-38 , 28/* "Variable" */,-38 , 8/* "{" */,-38 , 12/* ";" */,-38 , 7/* "RETURN" */,-38 , 30/* "FunctionInvoke" */,-38 , 22/* "-" */,-38 , 25/* "(" */,-38 , 31/* "String" */,-38 , 32/* "Integer" */,-38 , 33/* "Float" */,-38 , 21/* "+" */,-38 , 15/* "==" */,-38 , 20/* "<" */,-38 , 19/* ">" */,-38 , 17/* "<=" */,-38 , 18/* ">=" */,-38 , 16/* "!=" */,-38 , 26/* ")" */,-38 , 13/* "," */,-38 , 3/* "ELSE" */,-38 , 11/* "]" */,-38 , 9/* "}" */,-38 ),
-    /* State 75 */ new Array( 23/* "/" */,49 , 24/* "*" */,50 , 35/* "ScriptEnd" */,-37 , 29/* "FunctionName" */,-37 , 2/* "IF" */,-37 , 4/* "WHILE" */,-37 , 5/* "DO" */,-37 , 6/* "ECHO" */,-37 , 28/* "Variable" */,-37 , 8/* "{" */,-37 , 12/* ";" */,-37 , 7/* "RETURN" */,-37 , 30/* "FunctionInvoke" */,-37 , 22/* "-" */,-37 , 25/* "(" */,-37 , 31/* "String" */,-37 , 32/* "Integer" */,-37 , 33/* "Float" */,-37 , 21/* "+" */,-37 , 15/* "==" */,-37 , 20/* "<" */,-37 , 19/* ">" */,-37 , 17/* "<=" */,-37 , 18/* ">=" */,-37 , 16/* "!=" */,-37 , 26/* ")" */,-37 , 13/* "," */,-37 , 3/* "ELSE" */,-37 , 11/* "]" */,-37 , 9/* "}" */,-37 ),
-    /* State 76 */ new Array( 35/* "ScriptEnd" */,-41 , 29/* "FunctionName" */,-41 , 2/* "IF" */,-41 , 4/* "WHILE" */,-41 , 5/* "DO" */,-41 , 6/* "ECHO" */,-41 , 28/* "Variable" */,-41 , 8/* "{" */,-41 , 12/* ";" */,-41 , 7/* "RETURN" */,-41 , 30/* "FunctionInvoke" */,-41 , 22/* "-" */,-41 , 25/* "(" */,-41 , 31/* "String" */,-41 , 32/* "Integer" */,-41 , 33/* "Float" */,-41 , 21/* "+" */,-41 , 24/* "*" */,-41 , 23/* "/" */,-41 , 15/* "==" */,-41 , 20/* "<" */,-41 , 19/* ">" */,-41 , 17/* "<=" */,-41 , 18/* ">=" */,-41 , 16/* "!=" */,-41 , 26/* ")" */,-41 , 13/* "," */,-41 , 3/* "ELSE" */,-41 , 11/* "]" */,-41 , 9/* "}" */,-41 ),
-    /* State 77 */ new Array( 35/* "ScriptEnd" */,-40 , 29/* "FunctionName" */,-40 , 2/* "IF" */,-40 , 4/* "WHILE" */,-40 , 5/* "DO" */,-40 , 6/* "ECHO" */,-40 , 28/* "Variable" */,-40 , 8/* "{" */,-40 , 12/* ";" */,-40 , 7/* "RETURN" */,-40 , 30/* "FunctionInvoke" */,-40 , 22/* "-" */,-40 , 25/* "(" */,-40 , 31/* "String" */,-40 , 32/* "Integer" */,-40 , 33/* "Float" */,-40 , 21/* "+" */,-40 , 24/* "*" */,-40 , 23/* "/" */,-40 , 15/* "==" */,-40 , 20/* "<" */,-40 , 19/* ">" */,-40 , 17/* "<=" */,-40 , 18/* ">=" */,-40 , 16/* "!=" */,-40 , 26/* ")" */,-40 , 13/* "," */,-40 , 3/* "ELSE" */,-40 , 11/* "]" */,-40 , 9/* "}" */,-40 ),
-    /* State 78 */ new Array( 35/* "ScriptEnd" */,-46 , 29/* "FunctionName" */,-46 , 2/* "IF" */,-46 , 4/* "WHILE" */,-46 , 5/* "DO" */,-46 , 6/* "ECHO" */,-46 , 28/* "Variable" */,-46 , 8/* "{" */,-46 , 12/* ";" */,-46 , 7/* "RETURN" */,-46 , 30/* "FunctionInvoke" */,-46 , 22/* "-" */,-46 , 25/* "(" */,-46 , 31/* "String" */,-46 , 32/* "Integer" */,-46 , 33/* "Float" */,-46 , 21/* "+" */,-46 , 24/* "*" */,-46 , 23/* "/" */,-46 , 15/* "==" */,-46 , 20/* "<" */,-46 , 19/* ">" */,-46 , 17/* "<=" */,-46 , 18/* ">=" */,-46 , 16/* "!=" */,-46 , 26/* ")" */,-46 , 13/* "," */,-46 , 3/* "ELSE" */,-46 , 11/* "]" */,-46 , 9/* "}" */,-46 ),
-    /* State 79 */ new Array( 28/* "Variable" */,88 ),
-    /* State 80 */ new Array( 8/* "{" */,89 ),
-    /* State 81 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 82 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 35/* "ScriptEnd" */,-11 , 3/* "ELSE" */,-11 , 9/* "}" */,-11 ),
-    /* State 83 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 12/* ";" */,91 , 5/* "DO" */,64 ),
-    /* State 84 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 12/* ";" */,92 ),
-    /* State 85 */ new Array( 35/* "ScriptEnd" */,-14 , 29/* "FunctionName" */,-14 , 2/* "IF" */,-14 , 4/* "WHILE" */,-14 , 5/* "DO" */,-14 , 6/* "ECHO" */,-14 , 28/* "Variable" */,-14 , 8/* "{" */,-14 , 12/* ";" */,-14 , 7/* "RETURN" */,-14 , 30/* "FunctionInvoke" */,-14 , 22/* "-" */,-14 , 25/* "(" */,-14 , 31/* "String" */,-14 , 32/* "Integer" */,-14 , 33/* "Float" */,-14 , 3/* "ELSE" */,-14 , 9/* "}" */,-14 ),
-    /* State 86 */ new Array( 14/* "=" */,-29 , 35/* "ScriptEnd" */,-29 , 29/* "FunctionName" */,-29 , 2/* "IF" */,-29 , 4/* "WHILE" */,-29 , 5/* "DO" */,-29 , 6/* "ECHO" */,-29 , 28/* "Variable" */,-29 , 8/* "{" */,-29 , 12/* ";" */,-29 , 7/* "RETURN" */,-29 , 30/* "FunctionInvoke" */,-29 , 22/* "-" */,-29 , 25/* "(" */,-29 , 31/* "String" */,-29 , 32/* "Integer" */,-29 , 33/* "Float" */,-29 , 15/* "==" */,-29 , 20/* "<" */,-29 , 19/* ">" */,-29 , 17/* "<=" */,-29 , 18/* ">=" */,-29 , 16/* "!=" */,-29 , 3/* "ELSE" */,-29 , 26/* ")" */,-29 , 13/* "," */,-29 , 11/* "]" */,-29 , 9/* "}" */,-29 ),
-    /* State 87 */ new Array( 16/* "!=" */,29 , 18/* ">=" */,30 , 17/* "<=" */,31 , 19/* ">" */,32 , 20/* "<" */,33 , 15/* "==" */,34 , 26/* ")" */,-26 , 13/* "," */,-26 ),
-    /* State 88 */ new Array( 26/* ")" */,-18 , 13/* "," */,-18 ),
-    /* State 89 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 90 */ new Array( 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 , 35/* "ScriptEnd" */,-10 , 3/* "ELSE" */,-10 , 9/* "}" */,-10 ),
-    /* State 91 */ new Array( 35/* "ScriptEnd" */,-12 , 29/* "FunctionName" */,-12 , 2/* "IF" */,-12 , 4/* "WHILE" */,-12 , 5/* "DO" */,-12 , 6/* "ECHO" */,-12 , 28/* "Variable" */,-12 , 8/* "{" */,-12 , 12/* ";" */,-12 , 7/* "RETURN" */,-12 , 30/* "FunctionInvoke" */,-12 , 22/* "-" */,-12 , 25/* "(" */,-12 , 31/* "String" */,-12 , 32/* "Integer" */,-12 , 33/* "Float" */,-12 , 3/* "ELSE" */,-12 , 9/* "}" */,-12 ),
-    /* State 92 */ new Array( 35/* "ScriptEnd" */,-15 , 29/* "FunctionName" */,-15 , 2/* "IF" */,-15 , 4/* "WHILE" */,-15 , 5/* "DO" */,-15 , 6/* "ECHO" */,-15 , 28/* "Variable" */,-15 , 8/* "{" */,-15 , 12/* ";" */,-15 , 7/* "RETURN" */,-15 , 30/* "FunctionInvoke" */,-15 , 22/* "-" */,-15 , 25/* "(" */,-15 , 31/* "String" */,-15 , 32/* "Integer" */,-15 , 33/* "Float" */,-15 , 3/* "ELSE" */,-15 , 9/* "}" */,-15 ),
-    /* State 93 */ new Array( 9/* "}" */,94 , 29/* "FunctionName" */,4 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 28/* "Variable" */,11 , 8/* "{" */,12 , 12/* ";" */,13 , 7/* "RETURN" */,14 , 30/* "FunctionInvoke" */,16 , 22/* "-" */,20 , 25/* "(" */,22 , 31/* "String" */,23 , 32/* "Integer" */,24 , 33/* "Float" */,25 ),
-    /* State 94 */ new Array( 35/* "ScriptEnd" */,-6 , 29/* "FunctionName" */,-6 , 2/* "IF" */,-6 , 4/* "WHILE" */,-6 , 5/* "DO" */,-6 , 6/* "ECHO" */,-6 , 28/* "Variable" */,-6 , 8/* "{" */,-6 , 12/* ";" */,-6 , 7/* "RETURN" */,-6 , 30/* "FunctionInvoke" */,-6 , 22/* "-" */,-6 , 25/* "(" */,-6 , 31/* "String" */,-6 , 32/* "Integer" */,-6 , 33/* "Float" */,-6 , 3/* "ELSE" */,-6 , 9/* "}" */,-6 )
+    /* State 0 */ new Array( 72/* "$" */,-2 , 46/* "ScriptBegin" */,-2 ),
+    /* State 1 */ new Array( 46/* "ScriptBegin" */,3 , 72/* "$" */,0 ),
+    /* State 2 */ new Array( 72/* "$" */,-1 , 46/* "ScriptBegin" */,-1 ),
+    /* State 3 */ new Array( 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 4 */ new Array( 47/* "ScriptEnd" */,34 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 5 */ new Array( 18/* ";" */,35 ),
+    /* State 6 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 18/* ";" */,43 , 36/* "->" */,-53 ),
+    /* State 7 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 8 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 9 */ new Array( 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 10 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 11 */ new Array( 21/* "=" */,50 , 16/* "[" */,51 , 18/* ";" */,-70 , 31/* "-" */,-70 , 30/* "+" */,-70 , 33/* "*" */,-70 , 32/* "/" */,-70 , 22/* "==" */,-70 , 29/* "<" */,-70 , 28/* ">" */,-70 , 26/* "<=" */,-70 , 27/* ">=" */,-70 , 23/* "!=" */,-70 , 20/* "." */,-70 , 36/* "->" */,-70 ),
+    /* State 12 */ new Array( 47/* "ScriptEnd" */,-28 , 2/* "IF" */,-28 , 4/* "WHILE" */,-28 , 5/* "DO" */,-28 , 6/* "ECHO" */,-28 , 39/* "Variable" */,-28 , 14/* "{" */,-28 , 48/* "InternalNonScript" */,-28 , 38/* "//" */,-28 , 7/* "RETURN" */,-28 , 34/* "(" */,-28 , 9/* "ClassToken" */,-28 , 40/* "FunctionName" */,-28 , 41/* "FunctionInvoke" */,-28 , 31/* "-" */,-28 , 43/* "String" */,-28 , 44/* "Integer" */,-28 , 45/* "Float" */,-28 , 15/* "}" */,-28 , 3/* "ELSE" */,-28 ),
+    /* State 13 */ new Array( 47/* "ScriptEnd" */,-29 , 2/* "IF" */,-29 , 4/* "WHILE" */,-29 , 5/* "DO" */,-29 , 6/* "ECHO" */,-29 , 39/* "Variable" */,-29 , 14/* "{" */,-29 , 48/* "InternalNonScript" */,-29 , 38/* "//" */,-29 , 7/* "RETURN" */,-29 , 34/* "(" */,-29 , 9/* "ClassToken" */,-29 , 40/* "FunctionName" */,-29 , 41/* "FunctionInvoke" */,-29 , 31/* "-" */,-29 , 43/* "String" */,-29 , 44/* "Integer" */,-29 , 45/* "Float" */,-29 , 15/* "}" */,-29 , 3/* "ELSE" */,-29 ),
+    /* State 14 */ new Array( 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 15 */ new Array( 47/* "ScriptEnd" */,-32 , 2/* "IF" */,-32 , 4/* "WHILE" */,-32 , 5/* "DO" */,-32 , 6/* "ECHO" */,-32 , 39/* "Variable" */,-32 , 14/* "{" */,-32 , 48/* "InternalNonScript" */,-32 , 38/* "//" */,-32 , 7/* "RETURN" */,-32 , 34/* "(" */,-32 , 9/* "ClassToken" */,-32 , 40/* "FunctionName" */,-32 , 41/* "FunctionInvoke" */,-32 , 31/* "-" */,-32 , 43/* "String" */,-32 , 44/* "Integer" */,-32 , 45/* "Float" */,-32 , 15/* "}" */,-32 , 3/* "ELSE" */,-32 ),
+    /* State 16 */ new Array( 42/* "ClassName" */,54 , 47/* "ScriptEnd" */,-36 , 2/* "IF" */,-36 , 4/* "WHILE" */,-36 , 5/* "DO" */,-36 , 6/* "ECHO" */,-36 , 39/* "Variable" */,-36 , 14/* "{" */,-36 , 48/* "InternalNonScript" */,-36 , 38/* "//" */,-36 , 7/* "RETURN" */,-36 , 34/* "(" */,-36 , 9/* "ClassToken" */,-36 , 40/* "FunctionName" */,-36 , 41/* "FunctionInvoke" */,-36 , 31/* "-" */,-36 , 43/* "String" */,-36 , 44/* "Integer" */,-36 , 45/* "Float" */,-36 , 15/* "}" */,-36 ),
+    /* State 17 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 , 18/* ";" */,-41 ),
+    /* State 18 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 19 */ new Array( 18/* ";" */,-43 , 22/* "==" */,-43 , 29/* "<" */,-43 , 28/* ">" */,-43 , 26/* "<=" */,-43 , 27/* ">=" */,-43 , 23/* "!=" */,-43 , 20/* "." */,-43 , 36/* "->" */,-43 , 2/* "IF" */,-43 , 4/* "WHILE" */,-43 , 5/* "DO" */,-43 , 6/* "ECHO" */,-43 , 39/* "Variable" */,-43 , 14/* "{" */,-43 , 48/* "InternalNonScript" */,-43 , 38/* "//" */,-43 , 7/* "RETURN" */,-43 , 34/* "(" */,-43 , 9/* "ClassToken" */,-43 , 40/* "FunctionName" */,-43 , 41/* "FunctionInvoke" */,-43 , 31/* "-" */,-43 , 43/* "String" */,-43 , 44/* "Integer" */,-43 , 45/* "Float" */,-43 , 35/* ")" */,-43 , 19/* "," */,-43 , 17/* "]" */,-43 ),
+    /* State 20 */ new Array( 18/* ";" */,-44 , 22/* "==" */,-44 , 29/* "<" */,-44 , 28/* ">" */,-44 , 26/* "<=" */,-44 , 27/* ">=" */,-44 , 23/* "!=" */,-44 , 20/* "." */,-44 , 36/* "->" */,-44 , 2/* "IF" */,-44 , 4/* "WHILE" */,-44 , 5/* "DO" */,-44 , 6/* "ECHO" */,-44 , 39/* "Variable" */,-44 , 14/* "{" */,-44 , 48/* "InternalNonScript" */,-44 , 38/* "//" */,-44 , 7/* "RETURN" */,-44 , 34/* "(" */,-44 , 9/* "ClassToken" */,-44 , 40/* "FunctionName" */,-44 , 41/* "FunctionInvoke" */,-44 , 31/* "-" */,-44 , 43/* "String" */,-44 , 44/* "Integer" */,-44 , 45/* "Float" */,-44 , 35/* ")" */,-44 , 19/* "," */,-44 , 17/* "]" */,-44 ),
+    /* State 21 */ new Array( 42/* "ClassName" */,57 ),
+    /* State 22 */ new Array( 34/* "(" */,58 ),
+    /* State 23 */ new Array( 30/* "+" */,59 , 31/* "-" */,60 , 18/* ";" */,-61 , 22/* "==" */,-61 , 29/* "<" */,-61 , 28/* ">" */,-61 , 26/* "<=" */,-61 , 27/* ">=" */,-61 , 23/* "!=" */,-61 , 20/* "." */,-61 , 36/* "->" */,-61 , 2/* "IF" */,-61 , 4/* "WHILE" */,-61 , 5/* "DO" */,-61 , 6/* "ECHO" */,-61 , 39/* "Variable" */,-61 , 14/* "{" */,-61 , 48/* "InternalNonScript" */,-61 , 38/* "//" */,-61 , 7/* "RETURN" */,-61 , 34/* "(" */,-61 , 9/* "ClassToken" */,-61 , 40/* "FunctionName" */,-61 , 41/* "FunctionInvoke" */,-61 , 43/* "String" */,-61 , 44/* "Integer" */,-61 , 45/* "Float" */,-61 , 35/* ")" */,-61 , 19/* "," */,-61 , 17/* "]" */,-61 ),
+    /* State 24 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 , 35/* ")" */,-48 , 19/* "," */,-48 ),
+    /* State 25 */ new Array( 36/* "->" */,63 ),
+    /* State 26 */ new Array( 32/* "/" */,64 , 33/* "*" */,65 , 18/* ";" */,-64 , 31/* "-" */,-64 , 30/* "+" */,-64 , 22/* "==" */,-64 , 29/* "<" */,-64 , 28/* ">" */,-64 , 26/* "<=" */,-64 , 27/* ">=" */,-64 , 23/* "!=" */,-64 , 20/* "." */,-64 , 36/* "->" */,-64 , 2/* "IF" */,-64 , 4/* "WHILE" */,-64 , 5/* "DO" */,-64 , 6/* "ECHO" */,-64 , 39/* "Variable" */,-64 , 14/* "{" */,-64 , 48/* "InternalNonScript" */,-64 , 38/* "//" */,-64 , 7/* "RETURN" */,-64 , 34/* "(" */,-64 , 9/* "ClassToken" */,-64 , 40/* "FunctionName" */,-64 , 41/* "FunctionInvoke" */,-64 , 43/* "String" */,-64 , 44/* "Integer" */,-64 , 45/* "Float" */,-64 , 35/* ")" */,-64 , 19/* "," */,-64 , 17/* "]" */,-64 ),
+    /* State 27 */ new Array( 18/* ";" */,-67 , 31/* "-" */,-67 , 30/* "+" */,-67 , 33/* "*" */,-67 , 32/* "/" */,-67 , 22/* "==" */,-67 , 29/* "<" */,-67 , 28/* ">" */,-67 , 26/* "<=" */,-67 , 27/* ">=" */,-67 , 23/* "!=" */,-67 , 20/* "." */,-67 , 36/* "->" */,-67 , 2/* "IF" */,-67 , 4/* "WHILE" */,-67 , 5/* "DO" */,-67 , 6/* "ECHO" */,-67 , 39/* "Variable" */,-67 , 14/* "{" */,-67 , 48/* "InternalNonScript" */,-67 , 38/* "//" */,-67 , 7/* "RETURN" */,-67 , 34/* "(" */,-67 , 9/* "ClassToken" */,-67 , 40/* "FunctionName" */,-67 , 41/* "FunctionInvoke" */,-67 , 43/* "String" */,-67 , 44/* "Integer" */,-67 , 45/* "Float" */,-67 , 35/* ")" */,-67 , 19/* "," */,-67 , 17/* "]" */,-67 ),
+    /* State 28 */ new Array( 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 29 */ new Array( 18/* ";" */,-69 , 31/* "-" */,-69 , 30/* "+" */,-69 , 33/* "*" */,-69 , 32/* "/" */,-69 , 22/* "==" */,-69 , 29/* "<" */,-69 , 28/* ">" */,-69 , 26/* "<=" */,-69 , 27/* ">=" */,-69 , 23/* "!=" */,-69 , 20/* "." */,-69 , 36/* "->" */,-69 , 2/* "IF" */,-69 , 4/* "WHILE" */,-69 , 5/* "DO" */,-69 , 6/* "ECHO" */,-69 , 39/* "Variable" */,-69 , 14/* "{" */,-69 , 48/* "InternalNonScript" */,-69 , 38/* "//" */,-69 , 7/* "RETURN" */,-69 , 34/* "(" */,-69 , 9/* "ClassToken" */,-69 , 40/* "FunctionName" */,-69 , 41/* "FunctionInvoke" */,-69 , 43/* "String" */,-69 , 44/* "Integer" */,-69 , 45/* "Float" */,-69 , 35/* ")" */,-69 , 19/* "," */,-69 , 17/* "]" */,-69 ),
+    /* State 30 */ new Array( 18/* ";" */,-72 , 31/* "-" */,-72 , 30/* "+" */,-72 , 33/* "*" */,-72 , 32/* "/" */,-72 , 22/* "==" */,-72 , 29/* "<" */,-72 , 28/* ">" */,-72 , 26/* "<=" */,-72 , 27/* ">=" */,-72 , 23/* "!=" */,-72 , 20/* "." */,-72 , 36/* "->" */,-72 , 2/* "IF" */,-72 , 4/* "WHILE" */,-72 , 5/* "DO" */,-72 , 6/* "ECHO" */,-72 , 39/* "Variable" */,-72 , 14/* "{" */,-72 , 48/* "InternalNonScript" */,-72 , 38/* "//" */,-72 , 7/* "RETURN" */,-72 , 34/* "(" */,-72 , 9/* "ClassToken" */,-72 , 40/* "FunctionName" */,-72 , 41/* "FunctionInvoke" */,-72 , 43/* "String" */,-72 , 44/* "Integer" */,-72 , 45/* "Float" */,-72 , 35/* ")" */,-72 , 19/* "," */,-72 , 17/* "]" */,-72 ),
+    /* State 31 */ new Array( 18/* ";" */,-73 , 31/* "-" */,-73 , 30/* "+" */,-73 , 33/* "*" */,-73 , 32/* "/" */,-73 , 22/* "==" */,-73 , 29/* "<" */,-73 , 28/* ">" */,-73 , 26/* "<=" */,-73 , 27/* ">=" */,-73 , 23/* "!=" */,-73 , 20/* "." */,-73 , 36/* "->" */,-73 , 2/* "IF" */,-73 , 4/* "WHILE" */,-73 , 5/* "DO" */,-73 , 6/* "ECHO" */,-73 , 39/* "Variable" */,-73 , 14/* "{" */,-73 , 48/* "InternalNonScript" */,-73 , 38/* "//" */,-73 , 7/* "RETURN" */,-73 , 34/* "(" */,-73 , 9/* "ClassToken" */,-73 , 40/* "FunctionName" */,-73 , 41/* "FunctionInvoke" */,-73 , 43/* "String" */,-73 , 44/* "Integer" */,-73 , 45/* "Float" */,-73 , 35/* ")" */,-73 , 19/* "," */,-73 , 17/* "]" */,-73 ),
+    /* State 32 */ new Array( 18/* ";" */,-74 , 31/* "-" */,-74 , 30/* "+" */,-74 , 33/* "*" */,-74 , 32/* "/" */,-74 , 22/* "==" */,-74 , 29/* "<" */,-74 , 28/* ">" */,-74 , 26/* "<=" */,-74 , 27/* ">=" */,-74 , 23/* "!=" */,-74 , 20/* "." */,-74 , 36/* "->" */,-74 , 2/* "IF" */,-74 , 4/* "WHILE" */,-74 , 5/* "DO" */,-74 , 6/* "ECHO" */,-74 , 39/* "Variable" */,-74 , 14/* "{" */,-74 , 48/* "InternalNonScript" */,-74 , 38/* "//" */,-74 , 7/* "RETURN" */,-74 , 34/* "(" */,-74 , 9/* "ClassToken" */,-74 , 40/* "FunctionName" */,-74 , 41/* "FunctionInvoke" */,-74 , 43/* "String" */,-74 , 44/* "Integer" */,-74 , 45/* "Float" */,-74 , 35/* ")" */,-74 , 19/* "," */,-74 , 17/* "]" */,-74 ),
+    /* State 33 */ new Array( 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 , 47/* "ScriptEnd" */,-19 , 15/* "}" */,-19 , 3/* "ELSE" */,-19 ),
+    /* State 34 */ new Array( 72/* "$" */,-3 , 46/* "ScriptBegin" */,-3 ),
+    /* State 35 */ new Array( 47/* "ScriptEnd" */,-20 , 2/* "IF" */,-20 , 4/* "WHILE" */,-20 , 5/* "DO" */,-20 , 6/* "ECHO" */,-20 , 39/* "Variable" */,-20 , 14/* "{" */,-20 , 48/* "InternalNonScript" */,-20 , 38/* "//" */,-20 , 7/* "RETURN" */,-20 , 34/* "(" */,-20 , 9/* "ClassToken" */,-20 , 40/* "FunctionName" */,-20 , 41/* "FunctionInvoke" */,-20 , 31/* "-" */,-20 , 43/* "String" */,-20 , 44/* "Integer" */,-20 , 45/* "Float" */,-20 , 15/* "}" */,-20 , 3/* "ELSE" */,-20 ),
+    /* State 36 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 37 */ new Array( 31/* "-" */,28 , 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 38 */ new Array( 31/* "-" */,28 , 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 39 */ new Array( 31/* "-" */,28 , 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 40 */ new Array( 31/* "-" */,28 , 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 41 */ new Array( 31/* "-" */,28 , 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 42 */ new Array( 31/* "-" */,28 , 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 43 */ new Array( 47/* "ScriptEnd" */,-21 , 2/* "IF" */,-21 , 4/* "WHILE" */,-21 , 5/* "DO" */,-21 , 6/* "ECHO" */,-21 , 39/* "Variable" */,-21 , 14/* "{" */,-21 , 48/* "InternalNonScript" */,-21 , 38/* "//" */,-21 , 7/* "RETURN" */,-21 , 34/* "(" */,-21 , 9/* "ClassToken" */,-21 , 40/* "FunctionName" */,-21 , 41/* "FunctionInvoke" */,-21 , 31/* "-" */,-21 , 43/* "String" */,-21 , 44/* "Integer" */,-21 , 45/* "Float" */,-21 , 15/* "}" */,-21 , 3/* "ELSE" */,-21 ),
+    /* State 44 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 , 36/* "->" */,-53 ),
+    /* State 45 */ new Array( 16/* "[" */,51 , 2/* "IF" */,-70 , 4/* "WHILE" */,-70 , 5/* "DO" */,-70 , 6/* "ECHO" */,-70 , 39/* "Variable" */,-70 , 14/* "{" */,-70 , 48/* "InternalNonScript" */,-70 , 38/* "//" */,-70 , 7/* "RETURN" */,-70 , 34/* "(" */,-70 , 9/* "ClassToken" */,-70 , 40/* "FunctionName" */,-70 , 41/* "FunctionInvoke" */,-70 , 31/* "-" */,-70 , 43/* "String" */,-70 , 44/* "Integer" */,-70 , 45/* "Float" */,-70 , 30/* "+" */,-70 , 33/* "*" */,-70 , 32/* "/" */,-70 , 22/* "==" */,-70 , 29/* "<" */,-70 , 28/* ">" */,-70 , 26/* "<=" */,-70 , 27/* ">=" */,-70 , 23/* "!=" */,-70 , 20/* "." */,-70 , 36/* "->" */,-70 , 18/* ";" */,-70 , 35/* ")" */,-70 , 19/* "," */,-70 , 17/* "]" */,-70 ),
+    /* State 46 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 5/* "DO" */,78 , 36/* "->" */,-53 ),
+    /* State 47 */ new Array( 4/* "WHILE" */,79 , 2/* "IF" */,7 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 48 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 18/* ";" */,80 , 36/* "->" */,-53 ),
+    /* State 49 */ new Array( 16/* "[" */,81 , 21/* "=" */,82 , 18/* ";" */,-45 , 22/* "==" */,-45 , 29/* "<" */,-45 , 28/* ">" */,-45 , 26/* "<=" */,-45 , 27/* ">=" */,-45 , 23/* "!=" */,-45 , 20/* "." */,-45 , 36/* "->" */,-45 ),
+    /* State 50 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 51 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 52 */ new Array( 15/* "}" */,85 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 53 */ new Array( 47/* "ScriptEnd" */,-33 , 2/* "IF" */,-33 , 4/* "WHILE" */,-33 , 5/* "DO" */,-33 , 6/* "ECHO" */,-33 , 39/* "Variable" */,-33 , 14/* "{" */,-33 , 48/* "InternalNonScript" */,-33 , 38/* "//" */,-33 , 7/* "RETURN" */,-33 , 34/* "(" */,-33 , 9/* "ClassToken" */,-33 , 40/* "FunctionName" */,-33 , 41/* "FunctionInvoke" */,-33 , 31/* "-" */,-33 , 43/* "String" */,-33 , 44/* "Integer" */,-33 , 45/* "Float" */,-33 , 15/* "}" */,-33 , 3/* "ELSE" */,-33 ),
+    /* State 54 */ new Array( 43/* "String" */,86 , 47/* "ScriptEnd" */,-35 , 2/* "IF" */,-35 , 4/* "WHILE" */,-35 , 5/* "DO" */,-35 , 6/* "ECHO" */,-35 , 39/* "Variable" */,-35 , 14/* "{" */,-35 , 48/* "InternalNonScript" */,-35 , 38/* "//" */,-35 , 7/* "RETURN" */,-35 , 34/* "(" */,-35 , 9/* "ClassToken" */,-35 , 40/* "FunctionName" */,-35 , 41/* "FunctionInvoke" */,-35 , 31/* "-" */,-35 , 44/* "Integer" */,-35 , 45/* "Float" */,-35 , 15/* "}" */,-35 , 3/* "ELSE" */,-35 ),
+    /* State 55 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 18/* ";" */,-40 , 36/* "->" */,-53 ),
+    /* State 56 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 35/* ")" */,87 , 36/* "->" */,-53 ),
+    /* State 57 */ new Array( 14/* "{" */,88 ),
+    /* State 58 */ new Array( 39/* "Variable" */,90 , 35/* ")" */,-39 , 19/* "," */,-39 ),
+    /* State 59 */ new Array( 31/* "-" */,28 , 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 60 */ new Array( 31/* "-" */,28 , 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 61 */ new Array( 19/* "," */,93 , 35/* ")" */,94 ),
+    /* State 62 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 35/* ")" */,-47 , 19/* "," */,-47 , 36/* "->" */,-53 ),
+    /* State 63 */ new Array( 41/* "FunctionInvoke" */,95 ),
+    /* State 64 */ new Array( 31/* "-" */,28 , 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 65 */ new Array( 31/* "-" */,28 , 39/* "Variable" */,67 , 34/* "(" */,68 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 66 */ new Array( 18/* ";" */,-68 , 31/* "-" */,-68 , 30/* "+" */,-68 , 33/* "*" */,-68 , 32/* "/" */,-68 , 22/* "==" */,-68 , 29/* "<" */,-68 , 28/* ">" */,-68 , 26/* "<=" */,-68 , 27/* ">=" */,-68 , 23/* "!=" */,-68 , 20/* "." */,-68 , 36/* "->" */,-68 , 2/* "IF" */,-68 , 4/* "WHILE" */,-68 , 5/* "DO" */,-68 , 6/* "ECHO" */,-68 , 39/* "Variable" */,-68 , 14/* "{" */,-68 , 48/* "InternalNonScript" */,-68 , 38/* "//" */,-68 , 7/* "RETURN" */,-68 , 34/* "(" */,-68 , 9/* "ClassToken" */,-68 , 40/* "FunctionName" */,-68 , 41/* "FunctionInvoke" */,-68 , 43/* "String" */,-68 , 44/* "Integer" */,-68 , 45/* "Float" */,-68 , 35/* ")" */,-68 , 19/* "," */,-68 , 17/* "]" */,-68 ),
+    /* State 67 */ new Array( 18/* ";" */,-70 , 31/* "-" */,-70 , 30/* "+" */,-70 , 33/* "*" */,-70 , 32/* "/" */,-70 , 22/* "==" */,-70 , 29/* "<" */,-70 , 28/* ">" */,-70 , 26/* "<=" */,-70 , 27/* ">=" */,-70 , 23/* "!=" */,-70 , 20/* "." */,-70 , 36/* "->" */,-70 , 2/* "IF" */,-70 , 4/* "WHILE" */,-70 , 5/* "DO" */,-70 , 6/* "ECHO" */,-70 , 39/* "Variable" */,-70 , 14/* "{" */,-70 , 48/* "InternalNonScript" */,-70 , 38/* "//" */,-70 , 7/* "RETURN" */,-70 , 34/* "(" */,-70 , 9/* "ClassToken" */,-70 , 40/* "FunctionName" */,-70 , 41/* "FunctionInvoke" */,-70 , 43/* "String" */,-70 , 44/* "Integer" */,-70 , 45/* "Float" */,-70 , 35/* ")" */,-70 , 19/* "," */,-70 , 17/* "]" */,-70 ),
+    /* State 68 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 69 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 18/* ";" */,-60 , 36/* "->" */,-53 , 2/* "IF" */,-60 , 4/* "WHILE" */,-60 , 5/* "DO" */,-60 , 6/* "ECHO" */,-60 , 39/* "Variable" */,-60 , 14/* "{" */,-60 , 48/* "InternalNonScript" */,-60 , 38/* "//" */,-60 , 7/* "RETURN" */,-60 , 34/* "(" */,-60 , 9/* "ClassToken" */,-60 , 40/* "FunctionName" */,-60 , 41/* "FunctionInvoke" */,-60 , 31/* "-" */,-60 , 43/* "String" */,-60 , 44/* "Integer" */,-60 , 45/* "Float" */,-60 , 35/* ")" */,-60 , 19/* "," */,-60 , 17/* "]" */,-60 ),
+    /* State 70 */ new Array( 30/* "+" */,59 , 31/* "-" */,60 , 18/* ";" */,-59 , 22/* "==" */,-59 , 29/* "<" */,-59 , 28/* ">" */,-59 , 26/* "<=" */,-59 , 27/* ">=" */,-59 , 23/* "!=" */,-59 , 20/* "." */,-59 , 36/* "->" */,-59 , 2/* "IF" */,-59 , 4/* "WHILE" */,-59 , 5/* "DO" */,-59 , 6/* "ECHO" */,-59 , 39/* "Variable" */,-59 , 14/* "{" */,-59 , 48/* "InternalNonScript" */,-59 , 38/* "//" */,-59 , 7/* "RETURN" */,-59 , 34/* "(" */,-59 , 9/* "ClassToken" */,-59 , 40/* "FunctionName" */,-59 , 41/* "FunctionInvoke" */,-59 , 43/* "String" */,-59 , 44/* "Integer" */,-59 , 45/* "Float" */,-59 , 35/* ")" */,-59 , 19/* "," */,-59 , 17/* "]" */,-59 ),
+    /* State 71 */ new Array( 30/* "+" */,59 , 31/* "-" */,60 , 18/* ";" */,-58 , 22/* "==" */,-58 , 29/* "<" */,-58 , 28/* ">" */,-58 , 26/* "<=" */,-58 , 27/* ">=" */,-58 , 23/* "!=" */,-58 , 20/* "." */,-58 , 36/* "->" */,-58 , 2/* "IF" */,-58 , 4/* "WHILE" */,-58 , 5/* "DO" */,-58 , 6/* "ECHO" */,-58 , 39/* "Variable" */,-58 , 14/* "{" */,-58 , 48/* "InternalNonScript" */,-58 , 38/* "//" */,-58 , 7/* "RETURN" */,-58 , 34/* "(" */,-58 , 9/* "ClassToken" */,-58 , 40/* "FunctionName" */,-58 , 41/* "FunctionInvoke" */,-58 , 43/* "String" */,-58 , 44/* "Integer" */,-58 , 45/* "Float" */,-58 , 35/* ")" */,-58 , 19/* "," */,-58 , 17/* "]" */,-58 ),
+    /* State 72 */ new Array( 30/* "+" */,59 , 31/* "-" */,60 , 18/* ";" */,-57 , 22/* "==" */,-57 , 29/* "<" */,-57 , 28/* ">" */,-57 , 26/* "<=" */,-57 , 27/* ">=" */,-57 , 23/* "!=" */,-57 , 20/* "." */,-57 , 36/* "->" */,-57 , 2/* "IF" */,-57 , 4/* "WHILE" */,-57 , 5/* "DO" */,-57 , 6/* "ECHO" */,-57 , 39/* "Variable" */,-57 , 14/* "{" */,-57 , 48/* "InternalNonScript" */,-57 , 38/* "//" */,-57 , 7/* "RETURN" */,-57 , 34/* "(" */,-57 , 9/* "ClassToken" */,-57 , 40/* "FunctionName" */,-57 , 41/* "FunctionInvoke" */,-57 , 43/* "String" */,-57 , 44/* "Integer" */,-57 , 45/* "Float" */,-57 , 35/* ")" */,-57 , 19/* "," */,-57 , 17/* "]" */,-57 ),
+    /* State 73 */ new Array( 30/* "+" */,59 , 31/* "-" */,60 , 18/* ";" */,-56 , 22/* "==" */,-56 , 29/* "<" */,-56 , 28/* ">" */,-56 , 26/* "<=" */,-56 , 27/* ">=" */,-56 , 23/* "!=" */,-56 , 20/* "." */,-56 , 36/* "->" */,-56 , 2/* "IF" */,-56 , 4/* "WHILE" */,-56 , 5/* "DO" */,-56 , 6/* "ECHO" */,-56 , 39/* "Variable" */,-56 , 14/* "{" */,-56 , 48/* "InternalNonScript" */,-56 , 38/* "//" */,-56 , 7/* "RETURN" */,-56 , 34/* "(" */,-56 , 9/* "ClassToken" */,-56 , 40/* "FunctionName" */,-56 , 41/* "FunctionInvoke" */,-56 , 43/* "String" */,-56 , 44/* "Integer" */,-56 , 45/* "Float" */,-56 , 35/* ")" */,-56 , 19/* "," */,-56 , 17/* "]" */,-56 ),
+    /* State 74 */ new Array( 30/* "+" */,59 , 31/* "-" */,60 , 18/* ";" */,-55 , 22/* "==" */,-55 , 29/* "<" */,-55 , 28/* ">" */,-55 , 26/* "<=" */,-55 , 27/* ">=" */,-55 , 23/* "!=" */,-55 , 20/* "." */,-55 , 36/* "->" */,-55 , 2/* "IF" */,-55 , 4/* "WHILE" */,-55 , 5/* "DO" */,-55 , 6/* "ECHO" */,-55 , 39/* "Variable" */,-55 , 14/* "{" */,-55 , 48/* "InternalNonScript" */,-55 , 38/* "//" */,-55 , 7/* "RETURN" */,-55 , 34/* "(" */,-55 , 9/* "ClassToken" */,-55 , 40/* "FunctionName" */,-55 , 41/* "FunctionInvoke" */,-55 , 43/* "String" */,-55 , 44/* "Integer" */,-55 , 45/* "Float" */,-55 , 35/* ")" */,-55 , 19/* "," */,-55 , 17/* "]" */,-55 ),
+    /* State 75 */ new Array( 30/* "+" */,59 , 31/* "-" */,60 , 18/* ";" */,-54 , 22/* "==" */,-54 , 29/* "<" */,-54 , 28/* ">" */,-54 , 26/* "<=" */,-54 , 27/* ">=" */,-54 , 23/* "!=" */,-54 , 20/* "." */,-54 , 36/* "->" */,-54 , 2/* "IF" */,-54 , 4/* "WHILE" */,-54 , 5/* "DO" */,-54 , 6/* "ECHO" */,-54 , 39/* "Variable" */,-54 , 14/* "{" */,-54 , 48/* "InternalNonScript" */,-54 , 38/* "//" */,-54 , 7/* "RETURN" */,-54 , 34/* "(" */,-54 , 9/* "ClassToken" */,-54 , 40/* "FunctionName" */,-54 , 41/* "FunctionInvoke" */,-54 , 43/* "String" */,-54 , 44/* "Integer" */,-54 , 45/* "Float" */,-54 , 35/* ")" */,-54 , 19/* "," */,-54 , 17/* "]" */,-54 ),
+    /* State 76 */ new Array( 3/* "ELSE" */,99 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 , 47/* "ScriptEnd" */,-22 , 15/* "}" */,-22 ),
+    /* State 77 */ new Array( 16/* "[" */,81 , 2/* "IF" */,-45 , 4/* "WHILE" */,-45 , 5/* "DO" */,-45 , 6/* "ECHO" */,-45 , 39/* "Variable" */,-45 , 14/* "{" */,-45 , 48/* "InternalNonScript" */,-45 , 38/* "//" */,-45 , 7/* "RETURN" */,-45 , 34/* "(" */,-45 , 9/* "ClassToken" */,-45 , 40/* "FunctionName" */,-45 , 41/* "FunctionInvoke" */,-45 , 31/* "-" */,-45 , 43/* "String" */,-45 , 44/* "Integer" */,-45 , 45/* "Float" */,-45 , 22/* "==" */,-45 , 29/* "<" */,-45 , 28/* ">" */,-45 , 26/* "<=" */,-45 , 27/* ">=" */,-45 , 23/* "!=" */,-45 , 20/* "." */,-45 , 36/* "->" */,-45 , 18/* ";" */,-45 , 35/* ")" */,-45 , 19/* "," */,-45 , 17/* "]" */,-45 ),
+    /* State 78 */ new Array( 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 79 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 80 */ new Array( 47/* "ScriptEnd" */,-26 , 2/* "IF" */,-26 , 4/* "WHILE" */,-26 , 5/* "DO" */,-26 , 6/* "ECHO" */,-26 , 39/* "Variable" */,-26 , 14/* "{" */,-26 , 48/* "InternalNonScript" */,-26 , 38/* "//" */,-26 , 7/* "RETURN" */,-26 , 34/* "(" */,-26 , 9/* "ClassToken" */,-26 , 40/* "FunctionName" */,-26 , 41/* "FunctionInvoke" */,-26 , 31/* "-" */,-26 , 43/* "String" */,-26 , 44/* "Integer" */,-26 , 45/* "Float" */,-26 , 15/* "}" */,-26 , 3/* "ELSE" */,-26 ),
+    /* State 81 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 82 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 83 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 18/* ";" */,104 , 36/* "->" */,-53 ),
+    /* State 84 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 17/* "]" */,105 , 36/* "->" */,-53 ),
+    /* State 85 */ new Array( 47/* "ScriptEnd" */,-31 , 2/* "IF" */,-31 , 4/* "WHILE" */,-31 , 5/* "DO" */,-31 , 6/* "ECHO" */,-31 , 39/* "Variable" */,-31 , 14/* "{" */,-31 , 48/* "InternalNonScript" */,-31 , 38/* "//" */,-31 , 7/* "RETURN" */,-31 , 34/* "(" */,-31 , 9/* "ClassToken" */,-31 , 40/* "FunctionName" */,-31 , 41/* "FunctionInvoke" */,-31 , 31/* "-" */,-31 , 43/* "String" */,-31 , 44/* "Integer" */,-31 , 45/* "Float" */,-31 , 15/* "}" */,-31 , 3/* "ELSE" */,-31 ),
+    /* State 86 */ new Array( 47/* "ScriptEnd" */,-34 , 2/* "IF" */,-34 , 4/* "WHILE" */,-34 , 5/* "DO" */,-34 , 6/* "ECHO" */,-34 , 39/* "Variable" */,-34 , 14/* "{" */,-34 , 48/* "InternalNonScript" */,-34 , 38/* "//" */,-34 , 7/* "RETURN" */,-34 , 34/* "(" */,-34 , 9/* "ClassToken" */,-34 , 40/* "FunctionName" */,-34 , 41/* "FunctionInvoke" */,-34 , 31/* "-" */,-34 , 43/* "String" */,-34 , 44/* "Integer" */,-34 , 45/* "Float" */,-34 , 15/* "}" */,-34 , 3/* "ELSE" */,-34 ),
+    /* State 87 */ new Array( 18/* ";" */,-42 , 22/* "==" */,-42 , 29/* "<" */,-42 , 28/* ">" */,-42 , 26/* "<=" */,-42 , 27/* ">=" */,-42 , 23/* "!=" */,-42 , 20/* "." */,-42 , 36/* "->" */,-42 , 2/* "IF" */,-42 , 4/* "WHILE" */,-42 , 5/* "DO" */,-42 , 6/* "ECHO" */,-42 , 39/* "Variable" */,-42 , 14/* "{" */,-42 , 48/* "InternalNonScript" */,-42 , 38/* "//" */,-42 , 7/* "RETURN" */,-42 , 34/* "(" */,-42 , 9/* "ClassToken" */,-42 , 40/* "FunctionName" */,-42 , 41/* "FunctionInvoke" */,-42 , 31/* "-" */,-42 , 43/* "String" */,-42 , 44/* "Integer" */,-42 , 45/* "Float" */,-42 , 35/* ")" */,-42 , 19/* "," */,-42 , 17/* "]" */,-42 , 30/* "+" */,-71 , 33/* "*" */,-71 , 32/* "/" */,-71 ),
+    /* State 88 */ new Array( 15/* "}" */,-7 , 10/* "PublicToken" */,-7 , 11/* "VarToken" */,-7 , 13/* "ProtectedToken" */,-7 , 12/* "PrivateToken" */,-7 , 40/* "FunctionName" */,-7 ),
+    /* State 89 */ new Array( 19/* "," */,107 , 35/* ")" */,108 ),
+    /* State 90 */ new Array( 35/* ")" */,-38 , 19/* "," */,-38 ),
+    /* State 91 */ new Array( 32/* "/" */,64 , 33/* "*" */,65 , 18/* ";" */,-63 , 31/* "-" */,-63 , 30/* "+" */,-63 , 22/* "==" */,-63 , 29/* "<" */,-63 , 28/* ">" */,-63 , 26/* "<=" */,-63 , 27/* ">=" */,-63 , 23/* "!=" */,-63 , 20/* "." */,-63 , 36/* "->" */,-63 , 2/* "IF" */,-63 , 4/* "WHILE" */,-63 , 5/* "DO" */,-63 , 6/* "ECHO" */,-63 , 39/* "Variable" */,-63 , 14/* "{" */,-63 , 48/* "InternalNonScript" */,-63 , 38/* "//" */,-63 , 7/* "RETURN" */,-63 , 34/* "(" */,-63 , 9/* "ClassToken" */,-63 , 40/* "FunctionName" */,-63 , 41/* "FunctionInvoke" */,-63 , 43/* "String" */,-63 , 44/* "Integer" */,-63 , 45/* "Float" */,-63 , 35/* ")" */,-63 , 19/* "," */,-63 , 17/* "]" */,-63 ),
+    /* State 92 */ new Array( 32/* "/" */,64 , 33/* "*" */,65 , 18/* ";" */,-62 , 31/* "-" */,-62 , 30/* "+" */,-62 , 22/* "==" */,-62 , 29/* "<" */,-62 , 28/* ">" */,-62 , 26/* "<=" */,-62 , 27/* ">=" */,-62 , 23/* "!=" */,-62 , 20/* "." */,-62 , 36/* "->" */,-62 , 2/* "IF" */,-62 , 4/* "WHILE" */,-62 , 5/* "DO" */,-62 , 6/* "ECHO" */,-62 , 39/* "Variable" */,-62 , 14/* "{" */,-62 , 48/* "InternalNonScript" */,-62 , 38/* "//" */,-62 , 7/* "RETURN" */,-62 , 34/* "(" */,-62 , 9/* "ClassToken" */,-62 , 40/* "FunctionName" */,-62 , 41/* "FunctionInvoke" */,-62 , 43/* "String" */,-62 , 44/* "Integer" */,-62 , 45/* "Float" */,-62 , 35/* ")" */,-62 , 19/* "," */,-62 , 17/* "]" */,-62 ),
+    /* State 93 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 94 */ new Array( 18/* ";" */,-51 , 22/* "==" */,-51 , 29/* "<" */,-51 , 28/* ">" */,-51 , 26/* "<=" */,-51 , 27/* ">=" */,-51 , 23/* "!=" */,-51 , 20/* "." */,-51 , 36/* "->" */,-51 , 2/* "IF" */,-51 , 4/* "WHILE" */,-51 , 5/* "DO" */,-51 , 6/* "ECHO" */,-51 , 39/* "Variable" */,-51 , 14/* "{" */,-51 , 48/* "InternalNonScript" */,-51 , 38/* "//" */,-51 , 7/* "RETURN" */,-51 , 34/* "(" */,-51 , 9/* "ClassToken" */,-51 , 40/* "FunctionName" */,-51 , 41/* "FunctionInvoke" */,-51 , 31/* "-" */,-51 , 43/* "String" */,-51 , 44/* "Integer" */,-51 , 45/* "Float" */,-51 , 35/* ")" */,-51 , 19/* "," */,-51 , 17/* "]" */,-51 ),
+    /* State 95 */ new Array( 34/* "(" */,18 , 39/* "Variable" */,45 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 , 35/* ")" */,-48 , 19/* "," */,-48 ),
+    /* State 96 */ new Array( 18/* ";" */,-66 , 31/* "-" */,-66 , 30/* "+" */,-66 , 33/* "*" */,-66 , 32/* "/" */,-66 , 22/* "==" */,-66 , 29/* "<" */,-66 , 28/* ">" */,-66 , 26/* "<=" */,-66 , 27/* ">=" */,-66 , 23/* "!=" */,-66 , 20/* "." */,-66 , 36/* "->" */,-66 , 2/* "IF" */,-66 , 4/* "WHILE" */,-66 , 5/* "DO" */,-66 , 6/* "ECHO" */,-66 , 39/* "Variable" */,-66 , 14/* "{" */,-66 , 48/* "InternalNonScript" */,-66 , 38/* "//" */,-66 , 7/* "RETURN" */,-66 , 34/* "(" */,-66 , 9/* "ClassToken" */,-66 , 40/* "FunctionName" */,-66 , 41/* "FunctionInvoke" */,-66 , 43/* "String" */,-66 , 44/* "Integer" */,-66 , 45/* "Float" */,-66 , 35/* ")" */,-66 , 19/* "," */,-66 , 17/* "]" */,-66 ),
+    /* State 97 */ new Array( 18/* ";" */,-65 , 31/* "-" */,-65 , 30/* "+" */,-65 , 33/* "*" */,-65 , 32/* "/" */,-65 , 22/* "==" */,-65 , 29/* "<" */,-65 , 28/* ">" */,-65 , 26/* "<=" */,-65 , 27/* ">=" */,-65 , 23/* "!=" */,-65 , 20/* "." */,-65 , 36/* "->" */,-65 , 2/* "IF" */,-65 , 4/* "WHILE" */,-65 , 5/* "DO" */,-65 , 6/* "ECHO" */,-65 , 39/* "Variable" */,-65 , 14/* "{" */,-65 , 48/* "InternalNonScript" */,-65 , 38/* "//" */,-65 , 7/* "RETURN" */,-65 , 34/* "(" */,-65 , 9/* "ClassToken" */,-65 , 40/* "FunctionName" */,-65 , 41/* "FunctionInvoke" */,-65 , 43/* "String" */,-65 , 44/* "Integer" */,-65 , 45/* "Float" */,-65 , 35/* ")" */,-65 , 19/* "," */,-65 , 17/* "]" */,-65 ),
+    /* State 98 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 35/* ")" */,111 , 36/* "->" */,-53 ),
+    /* State 99 */ new Array( 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 100 */ new Array( 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 , 47/* "ScriptEnd" */,-24 , 15/* "}" */,-24 , 3/* "ELSE" */,-24 ),
+    /* State 101 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 18/* ";" */,113 , 5/* "DO" */,78 , 36/* "->" */,-53 ),
+    /* State 102 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 17/* "]" */,114 , 36/* "->" */,-53 ),
+    /* State 103 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 18/* ";" */,115 , 36/* "->" */,-53 ),
+    /* State 104 */ new Array( 47/* "ScriptEnd" */,-27 , 2/* "IF" */,-27 , 4/* "WHILE" */,-27 , 5/* "DO" */,-27 , 6/* "ECHO" */,-27 , 39/* "Variable" */,-27 , 14/* "{" */,-27 , 48/* "InternalNonScript" */,-27 , 38/* "//" */,-27 , 7/* "RETURN" */,-27 , 34/* "(" */,-27 , 9/* "ClassToken" */,-27 , 40/* "FunctionName" */,-27 , 41/* "FunctionInvoke" */,-27 , 31/* "-" */,-27 , 43/* "String" */,-27 , 44/* "Integer" */,-27 , 45/* "Float" */,-27 , 15/* "}" */,-27 , 3/* "ELSE" */,-27 ),
+    /* State 105 */ new Array( 21/* "=" */,-50 , 18/* ";" */,-50 , 22/* "==" */,-50 , 29/* "<" */,-50 , 28/* ">" */,-50 , 26/* "<=" */,-50 , 27/* ">=" */,-50 , 23/* "!=" */,-50 , 20/* "." */,-50 , 36/* "->" */,-50 , 16/* "[" */,-50 , 2/* "IF" */,-50 , 4/* "WHILE" */,-50 , 5/* "DO" */,-50 , 6/* "ECHO" */,-50 , 39/* "Variable" */,-50 , 14/* "{" */,-50 , 48/* "InternalNonScript" */,-50 , 38/* "//" */,-50 , 7/* "RETURN" */,-50 , 34/* "(" */,-50 , 9/* "ClassToken" */,-50 , 40/* "FunctionName" */,-50 , 41/* "FunctionInvoke" */,-50 , 31/* "-" */,-50 , 43/* "String" */,-50 , 44/* "Integer" */,-50 , 45/* "Float" */,-50 , 35/* ")" */,-50 , 19/* "," */,-50 , 17/* "]" */,-50 ),
+    /* State 106 */ new Array( 15/* "}" */,118 , 10/* "PublicToken" */,121 , 11/* "VarToken" */,122 , 13/* "ProtectedToken" */,123 , 12/* "PrivateToken" */,124 , 40/* "FunctionName" */,-13 ),
+    /* State 107 */ new Array( 39/* "Variable" */,125 ),
+    /* State 108 */ new Array( 14/* "{" */,126 ),
+    /* State 109 */ new Array( 20/* "." */,36 , 23/* "!=" */,37 , 27/* ">=" */,38 , 26/* "<=" */,39 , 28/* ">" */,40 , 29/* "<" */,41 , 22/* "==" */,42 , 35/* ")" */,-46 , 19/* "," */,-46 , 36/* "->" */,-53 ),
+    /* State 110 */ new Array( 19/* "," */,93 , 35/* ")" */,127 ),
+    /* State 111 */ new Array( 18/* ";" */,-71 , 31/* "-" */,-71 , 30/* "+" */,-71 , 33/* "*" */,-71 , 32/* "/" */,-71 , 22/* "==" */,-71 , 29/* "<" */,-71 , 28/* ">" */,-71 , 26/* "<=" */,-71 , 27/* ">=" */,-71 , 23/* "!=" */,-71 , 20/* "." */,-71 , 36/* "->" */,-71 , 2/* "IF" */,-71 , 4/* "WHILE" */,-71 , 5/* "DO" */,-71 , 6/* "ECHO" */,-71 , 39/* "Variable" */,-71 , 14/* "{" */,-71 , 48/* "InternalNonScript" */,-71 , 38/* "//" */,-71 , 7/* "RETURN" */,-71 , 34/* "(" */,-71 , 9/* "ClassToken" */,-71 , 40/* "FunctionName" */,-71 , 41/* "FunctionInvoke" */,-71 , 43/* "String" */,-71 , 44/* "Integer" */,-71 , 45/* "Float" */,-71 , 35/* ")" */,-71 , 19/* "," */,-71 , 17/* "]" */,-71 ),
+    /* State 112 */ new Array( 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 , 47/* "ScriptEnd" */,-23 , 15/* "}" */,-23 , 3/* "ELSE" */,-23 ),
+    /* State 113 */ new Array( 47/* "ScriptEnd" */,-25 , 2/* "IF" */,-25 , 4/* "WHILE" */,-25 , 5/* "DO" */,-25 , 6/* "ECHO" */,-25 , 39/* "Variable" */,-25 , 14/* "{" */,-25 , 48/* "InternalNonScript" */,-25 , 38/* "//" */,-25 , 7/* "RETURN" */,-25 , 34/* "(" */,-25 , 9/* "ClassToken" */,-25 , 40/* "FunctionName" */,-25 , 41/* "FunctionInvoke" */,-25 , 31/* "-" */,-25 , 43/* "String" */,-25 , 44/* "Integer" */,-25 , 45/* "Float" */,-25 , 15/* "}" */,-25 , 3/* "ELSE" */,-25 ),
+    /* State 114 */ new Array( 21/* "=" */,-49 , 18/* ";" */,-49 , 22/* "==" */,-49 , 29/* "<" */,-49 , 28/* ">" */,-49 , 26/* "<=" */,-49 , 27/* ">=" */,-49 , 23/* "!=" */,-49 , 20/* "." */,-49 , 36/* "->" */,-49 , 16/* "[" */,-49 , 2/* "IF" */,-49 , 4/* "WHILE" */,-49 , 5/* "DO" */,-49 , 6/* "ECHO" */,-49 , 39/* "Variable" */,-49 , 14/* "{" */,-49 , 48/* "InternalNonScript" */,-49 , 38/* "//" */,-49 , 7/* "RETURN" */,-49 , 34/* "(" */,-49 , 9/* "ClassToken" */,-49 , 40/* "FunctionName" */,-49 , 41/* "FunctionInvoke" */,-49 , 31/* "-" */,-49 , 43/* "String" */,-49 , 44/* "Integer" */,-49 , 45/* "Float" */,-49 , 35/* ")" */,-49 , 19/* "," */,-49 , 17/* "]" */,-49 ),
+    /* State 115 */ new Array( 47/* "ScriptEnd" */,-30 , 2/* "IF" */,-30 , 4/* "WHILE" */,-30 , 5/* "DO" */,-30 , 6/* "ECHO" */,-30 , 39/* "Variable" */,-30 , 14/* "{" */,-30 , 48/* "InternalNonScript" */,-30 , 38/* "//" */,-30 , 7/* "RETURN" */,-30 , 34/* "(" */,-30 , 9/* "ClassToken" */,-30 , 40/* "FunctionName" */,-30 , 41/* "FunctionInvoke" */,-30 , 31/* "-" */,-30 , 43/* "String" */,-30 , 44/* "Integer" */,-30 , 45/* "Float" */,-30 , 15/* "}" */,-30 , 3/* "ELSE" */,-30 ),
+    /* State 116 */ new Array( 15/* "}" */,-6 , 10/* "PublicToken" */,-6 , 11/* "VarToken" */,-6 , 13/* "ProtectedToken" */,-6 , 12/* "PrivateToken" */,-6 , 40/* "FunctionName" */,-6 ),
+    /* State 117 */ new Array( 15/* "}" */,-5 , 10/* "PublicToken" */,-5 , 11/* "VarToken" */,-5 , 13/* "ProtectedToken" */,-5 , 12/* "PrivateToken" */,-5 , 40/* "FunctionName" */,-5 ),
+    /* State 118 */ new Array( 47/* "ScriptEnd" */,-4 , 2/* "IF" */,-4 , 4/* "WHILE" */,-4 , 5/* "DO" */,-4 , 6/* "ECHO" */,-4 , 39/* "Variable" */,-4 , 14/* "{" */,-4 , 48/* "InternalNonScript" */,-4 , 38/* "//" */,-4 , 7/* "RETURN" */,-4 , 34/* "(" */,-4 , 9/* "ClassToken" */,-4 , 40/* "FunctionName" */,-4 , 41/* "FunctionInvoke" */,-4 , 31/* "-" */,-4 , 43/* "String" */,-4 , 44/* "Integer" */,-4 , 45/* "Float" */,-4 , 15/* "}" */,-4 , 3/* "ELSE" */,-4 ),
+    /* State 119 */ new Array( 39/* "Variable" */,128 ),
+    /* State 120 */ new Array( 40/* "FunctionName" */,129 ),
+    /* State 121 */ new Array( 39/* "Variable" */,-8 , 40/* "FunctionName" */,-12 ),
+    /* State 122 */ new Array( 39/* "Variable" */,-9 ),
+    /* State 123 */ new Array( 39/* "Variable" */,-10 , 40/* "FunctionName" */,-14 ),
+    /* State 124 */ new Array( 39/* "Variable" */,-11 , 40/* "FunctionName" */,-15 ),
+    /* State 125 */ new Array( 35/* ")" */,-37 , 19/* "," */,-37 ),
+    /* State 126 */ new Array( 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 127 */ new Array( 18/* ";" */,-52 , 22/* "==" */,-52 , 29/* "<" */,-52 , 28/* ">" */,-52 , 26/* "<=" */,-52 , 27/* ">=" */,-52 , 23/* "!=" */,-52 , 20/* "." */,-52 , 36/* "->" */,-52 , 2/* "IF" */,-52 , 4/* "WHILE" */,-52 , 5/* "DO" */,-52 , 6/* "ECHO" */,-52 , 39/* "Variable" */,-52 , 14/* "{" */,-52 , 48/* "InternalNonScript" */,-52 , 38/* "//" */,-52 , 7/* "RETURN" */,-52 , 34/* "(" */,-52 , 9/* "ClassToken" */,-52 , 40/* "FunctionName" */,-52 , 41/* "FunctionInvoke" */,-52 , 31/* "-" */,-52 , 43/* "String" */,-52 , 44/* "Integer" */,-52 , 45/* "Float" */,-52 , 35/* ")" */,-52 , 19/* "," */,-52 , 17/* "]" */,-52 ),
+    /* State 128 */ new Array( 18/* ";" */,131 ),
+    /* State 129 */ new Array( 34/* "(" */,132 ),
+    /* State 130 */ new Array( 15/* "}" */,133 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 131 */ new Array( 15/* "}" */,-18 , 10/* "PublicToken" */,-18 , 11/* "VarToken" */,-18 , 13/* "ProtectedToken" */,-18 , 12/* "PrivateToken" */,-18 , 40/* "FunctionName" */,-18 ),
+    /* State 132 */ new Array( 39/* "Variable" */,90 , 35/* ")" */,-39 , 19/* "," */,-39 ),
+    /* State 133 */ new Array( 47/* "ScriptEnd" */,-16 , 2/* "IF" */,-16 , 4/* "WHILE" */,-16 , 5/* "DO" */,-16 , 6/* "ECHO" */,-16 , 39/* "Variable" */,-16 , 14/* "{" */,-16 , 48/* "InternalNonScript" */,-16 , 38/* "//" */,-16 , 7/* "RETURN" */,-16 , 34/* "(" */,-16 , 9/* "ClassToken" */,-16 , 40/* "FunctionName" */,-16 , 41/* "FunctionInvoke" */,-16 , 31/* "-" */,-16 , 43/* "String" */,-16 , 44/* "Integer" */,-16 , 45/* "Float" */,-16 , 15/* "}" */,-16 , 3/* "ELSE" */,-16 ),
+    /* State 134 */ new Array( 19/* "," */,107 , 35/* ")" */,135 ),
+    /* State 135 */ new Array( 14/* "{" */,136 ),
+    /* State 136 */ new Array( 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 137 */ new Array( 15/* "}" */,138 , 2/* "IF" */,7 , 4/* "WHILE" */,8 , 5/* "DO" */,9 , 6/* "ECHO" */,10 , 39/* "Variable" */,11 , 14/* "{" */,14 , 48/* "InternalNonScript" */,15 , 38/* "//" */,16 , 7/* "RETURN" */,17 , 34/* "(" */,18 , 9/* "ClassToken" */,21 , 40/* "FunctionName" */,22 , 41/* "FunctionInvoke" */,24 , 31/* "-" */,28 , 43/* "String" */,30 , 44/* "Integer" */,31 , 45/* "Float" */,32 ),
+    /* State 138 */ new Array( 15/* "}" */,-17 , 10/* "PublicToken" */,-17 , 11/* "VarToken" */,-17 , 13/* "ProtectedToken" */,-17 , 12/* "PrivateToken" */,-17 , 40/* "FunctionName" */,-17 )
 );
 
 /* Goto-Table */
 var goto_tab = new Array(
-    /* State 0 */ new Array( 36/* PHPScript */,1 ),
-    /* State 1 */ new Array( ),
-    /* State 2 */ new Array( 37/* Stmt */,3 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 3 */ new Array( 37/* Stmt */,26 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 4 */ new Array( ),
+    /* State 0 */ new Array( 49/* PHPScript */,1 ),
+    /* State 1 */ new Array( 50/* Script */,2 ),
+    /* State 2 */ new Array( ),
+    /* State 3 */ new Array( 51/* Stmt */,4 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 4 */ new Array( 51/* Stmt */,33 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
     /* State 5 */ new Array( ),
     /* State 6 */ new Array( ),
-    /* State 7 */ new Array( 41/* Expression */,35 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 8 */ new Array( 41/* Expression */,37 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 9 */ new Array( 37/* Stmt */,38 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 10 */ new Array( 41/* Expression */,39 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 11 */ new Array( 42/* ArrayIndices */,40 ),
-    /* State 12 */ new Array( 38/* Stmt_List */,43 ),
+    /* State 7 */ new Array( 61/* Expression */,44 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 8 */ new Array( 61/* Expression */,46 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 9 */ new Array( 51/* Stmt */,47 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 10 */ new Array( 61/* Expression */,48 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 11 */ new Array( 62/* ArrayIndices */,49 ),
+    /* State 12 */ new Array( ),
     /* State 13 */ new Array( ),
-    /* State 14 */ new Array( 41/* Expression */,44 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
+    /* State 14 */ new Array( 51/* Stmt */,52 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
     /* State 15 */ new Array( ),
-    /* State 16 */ new Array( 44/* ActualParameterList */,45 , 41/* Expression */,46 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 17 */ new Array( ),
-    /* State 18 */ new Array( ),
+    /* State 16 */ new Array( 63/* AssertStmt */,53 ),
+    /* State 17 */ new Array( 61/* Expression */,55 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 18 */ new Array( 61/* Expression */,56 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
     /* State 19 */ new Array( ),
-    /* State 20 */ new Array( 48/* Value */,51 ),
+    /* State 20 */ new Array( ),
     /* State 21 */ new Array( ),
-    /* State 22 */ new Array( 41/* Expression */,53 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
+    /* State 22 */ new Array( ),
     /* State 23 */ new Array( ),
-    /* State 24 */ new Array( ),
+    /* State 24 */ new Array( 66/* ActualParameterList */,61 , 61/* Expression */,62 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
     /* State 25 */ new Array( ),
-    /* State 26 */ new Array( 37/* Stmt */,26 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
+    /* State 26 */ new Array( ),
     /* State 27 */ new Array( ),
-    /* State 28 */ new Array( 39/* FormalParameterList */,54 ),
-    /* State 29 */ new Array( 45/* AddSubExp */,56 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 30 */ new Array( 45/* AddSubExp */,57 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 31 */ new Array( 45/* AddSubExp */,58 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 32 */ new Array( 45/* AddSubExp */,59 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 33 */ new Array( 45/* AddSubExp */,60 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 34 */ new Array( 45/* AddSubExp */,61 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 35 */ new Array( 37/* Stmt */,62 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 36 */ new Array( 42/* ArrayIndices */,63 ),
-    /* State 37 */ new Array( ),
-    /* State 38 */ new Array( 37/* Stmt */,26 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 39 */ new Array( ),
-    /* State 40 */ new Array( ),
-    /* State 41 */ new Array( 41/* Expression */,68 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 42 */ new Array( 41/* Expression */,69 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 43 */ new Array( 37/* Stmt */,70 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 44 */ new Array( ),
-    /* State 45 */ new Array( ),
+    /* State 28 */ new Array( 71/* Value */,66 ),
+    /* State 29 */ new Array( ),
+    /* State 30 */ new Array( ),
+    /* State 31 */ new Array( ),
+    /* State 32 */ new Array( ),
+    /* State 33 */ new Array( 51/* Stmt */,33 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 34 */ new Array( ),
+    /* State 35 */ new Array( ),
+    /* State 36 */ new Array( 61/* Expression */,69 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 37 */ new Array( 68/* AddSubExp */,70 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 38 */ new Array( 68/* AddSubExp */,71 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 39 */ new Array( 68/* AddSubExp */,72 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 40 */ new Array( 68/* AddSubExp */,73 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 41 */ new Array( 68/* AddSubExp */,74 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 42 */ new Array( 68/* AddSubExp */,75 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 43 */ new Array( ),
+    /* State 44 */ new Array( 51/* Stmt */,76 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 45 */ new Array( 62/* ArrayIndices */,77 ),
     /* State 46 */ new Array( ),
-    /* State 47 */ new Array( 46/* MulDivExp */,74 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 48 */ new Array( 46/* MulDivExp */,75 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 49 */ new Array( 47/* NegExp */,76 , 48/* Value */,21 ),
-    /* State 50 */ new Array( 47/* NegExp */,77 , 48/* Value */,21 ),
-    /* State 51 */ new Array( ),
-    /* State 52 */ new Array( ),
+    /* State 47 */ new Array( 51/* Stmt */,33 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 48 */ new Array( ),
+    /* State 49 */ new Array( ),
+    /* State 50 */ new Array( 61/* Expression */,83 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 51 */ new Array( 61/* Expression */,84 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 52 */ new Array( 51/* Stmt */,33 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
     /* State 53 */ new Array( ),
     /* State 54 */ new Array( ),
     /* State 55 */ new Array( ),
     /* State 56 */ new Array( ),
     /* State 57 */ new Array( ),
-    /* State 58 */ new Array( ),
-    /* State 59 */ new Array( ),
-    /* State 60 */ new Array( ),
+    /* State 58 */ new Array( 58/* FormalParameterList */,89 ),
+    /* State 59 */ new Array( 69/* MulDivExp */,91 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 60 */ new Array( 69/* MulDivExp */,92 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
     /* State 61 */ new Array( ),
-    /* State 62 */ new Array( 37/* Stmt */,26 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
+    /* State 62 */ new Array( ),
     /* State 63 */ new Array( ),
-    /* State 64 */ new Array( 37/* Stmt */,82 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 65 */ new Array( 41/* Expression */,83 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
+    /* State 64 */ new Array( 70/* UnaryOp */,96 , 71/* Value */,29 ),
+    /* State 65 */ new Array( 70/* UnaryOp */,97 , 71/* Value */,29 ),
     /* State 66 */ new Array( ),
-    /* State 67 */ new Array( 41/* Expression */,84 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 68 */ new Array( ),
+    /* State 67 */ new Array( ),
+    /* State 68 */ new Array( 61/* Expression */,98 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
     /* State 69 */ new Array( ),
-    /* State 70 */ new Array( 37/* Stmt */,26 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
+    /* State 70 */ new Array( ),
     /* State 71 */ new Array( ),
-    /* State 72 */ new Array( 41/* Expression */,87 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
+    /* State 72 */ new Array( ),
     /* State 73 */ new Array( ),
     /* State 74 */ new Array( ),
     /* State 75 */ new Array( ),
-    /* State 76 */ new Array( ),
+    /* State 76 */ new Array( 51/* Stmt */,33 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
     /* State 77 */ new Array( ),
-    /* State 78 */ new Array( ),
-    /* State 79 */ new Array( ),
+    /* State 78 */ new Array( 51/* Stmt */,100 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 79 */ new Array( 61/* Expression */,101 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
     /* State 80 */ new Array( ),
-    /* State 81 */ new Array( 37/* Stmt */,90 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 82 */ new Array( 37/* Stmt */,26 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
+    /* State 81 */ new Array( 61/* Expression */,102 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 82 */ new Array( 61/* Expression */,103 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
     /* State 83 */ new Array( ),
     /* State 84 */ new Array( ),
     /* State 85 */ new Array( ),
     /* State 86 */ new Array( ),
     /* State 87 */ new Array( ),
-    /* State 88 */ new Array( ),
-    /* State 89 */ new Array( 37/* Stmt */,93 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 90 */ new Array( 37/* Stmt */,26 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
+    /* State 88 */ new Array( 52/* Member */,106 ),
+    /* State 89 */ new Array( ),
+    /* State 90 */ new Array( ),
     /* State 91 */ new Array( ),
     /* State 92 */ new Array( ),
-    /* State 93 */ new Array( 37/* Stmt */,26 , 40/* Return */,5 , 41/* Expression */,6 , 43/* UnaryOp */,15 , 45/* AddSubExp */,17 , 46/* MulDivExp */,18 , 47/* NegExp */,19 , 48/* Value */,21 ),
-    /* State 94 */ new Array( )
+    /* State 93 */ new Array( 61/* Expression */,109 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 94 */ new Array( ),
+    /* State 95 */ new Array( 66/* ActualParameterList */,110 , 61/* Expression */,62 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 96 */ new Array( ),
+    /* State 97 */ new Array( ),
+    /* State 98 */ new Array( ),
+    /* State 99 */ new Array( 51/* Stmt */,112 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 100 */ new Array( 51/* Stmt */,33 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 101 */ new Array( ),
+    /* State 102 */ new Array( ),
+    /* State 103 */ new Array( ),
+    /* State 104 */ new Array( ),
+    /* State 105 */ new Array( ),
+    /* State 106 */ new Array( 55/* ClassFunctionDefinition */,116 , 54/* AttributeDefinition */,117 , 56/* AttributeMod */,119 , 57/* FunctionMod */,120 ),
+    /* State 107 */ new Array( ),
+    /* State 108 */ new Array( ),
+    /* State 109 */ new Array( ),
+    /* State 110 */ new Array( ),
+    /* State 111 */ new Array( ),
+    /* State 112 */ new Array( 51/* Stmt */,33 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 113 */ new Array( ),
+    /* State 114 */ new Array( ),
+    /* State 115 */ new Array( ),
+    /* State 116 */ new Array( ),
+    /* State 117 */ new Array( ),
+    /* State 118 */ new Array( ),
+    /* State 119 */ new Array( ),
+    /* State 120 */ new Array( ),
+    /* State 121 */ new Array( ),
+    /* State 122 */ new Array( ),
+    /* State 123 */ new Array( ),
+    /* State 124 */ new Array( ),
+    /* State 125 */ new Array( ),
+    /* State 126 */ new Array( 51/* Stmt */,130 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 127 */ new Array( ),
+    /* State 128 */ new Array( ),
+    /* State 129 */ new Array( ),
+    /* State 130 */ new Array( 51/* Stmt */,33 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 131 */ new Array( ),
+    /* State 132 */ new Array( 58/* FormalParameterList */,134 ),
+    /* State 133 */ new Array( ),
+    /* State 134 */ new Array( ),
+    /* State 135 */ new Array( ),
+    /* State 136 */ new Array( 51/* Stmt */,137 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 137 */ new Array( 51/* Stmt */,33 , 60/* Return */,5 , 61/* Expression */,6 , 53/* ClassDefinition */,12 , 59/* FunctionDefinition */,13 , 64/* BinaryOp */,19 , 65/* FunctionInvocation */,20 , 68/* AddSubExp */,23 , 67/* Target */,25 , 69/* MulDivExp */,26 , 70/* UnaryOp */,27 , 71/* Value */,29 ),
+    /* State 138 */ new Array( )
 );
 
 
@@ -1556,15 +2515,24 @@ var labels = new Array(
     "DO" /* Terminal symbol */,
     "ECHO" /* Terminal symbol */,
     "RETURN" /* Terminal symbol */,
+    "NEW" /* Terminal symbol */,
+    "ClassToken" /* Terminal symbol */,
+    "PublicToken" /* Terminal symbol */,
+    "VarToken" /* Terminal symbol */,
+    "PrivateToken" /* Terminal symbol */,
+    "ProtectedToken" /* Terminal symbol */,
     "{" /* Terminal symbol */,
     "}" /* Terminal symbol */,
     "[" /* Terminal symbol */,
     "]" /* Terminal symbol */,
     ";" /* Terminal symbol */,
     "," /* Terminal symbol */,
+    "." /* Terminal symbol */,
     "=" /* Terminal symbol */,
     "==" /* Terminal symbol */,
     "!=" /* Terminal symbol */,
+    "<!" /* Terminal symbol */,
+    "!>" /* Terminal symbol */,
     "<=" /* Terminal symbol */,
     ">=" /* Terminal symbol */,
     ">" /* Terminal symbol */,
@@ -1575,27 +2543,41 @@ var labels = new Array(
     "*" /* Terminal symbol */,
     "(" /* Terminal symbol */,
     ")" /* Terminal symbol */,
-    "#" /* Terminal symbol */,
+    "->" /* Terminal symbol */,
+    "::" /* Terminal symbol */,
+    "//" /* Terminal symbol */,
     "Variable" /* Terminal symbol */,
     "FunctionName" /* Terminal symbol */,
     "FunctionInvoke" /* Terminal symbol */,
+    "ClassName" /* Terminal symbol */,
     "String" /* Terminal symbol */,
     "Integer" /* Terminal symbol */,
     "Float" /* Terminal symbol */,
     "ScriptBegin" /* Terminal symbol */,
     "ScriptEnd" /* Terminal symbol */,
+    "InternalNonScript" /* Terminal symbol */,
     "PHPScript" /* Non-terminal symbol */,
+    "Script" /* Non-terminal symbol */,
     "Stmt" /* Non-terminal symbol */,
-    "Stmt_List" /* Non-terminal symbol */,
+    "Member" /* Non-terminal symbol */,
+    "ClassDefinition" /* Non-terminal symbol */,
+    "AttributeDefinition" /* Non-terminal symbol */,
+    "ClassFunctionDefinition" /* Non-terminal symbol */,
+    "AttributeMod" /* Non-terminal symbol */,
+    "FunctionMod" /* Non-terminal symbol */,
     "FormalParameterList" /* Non-terminal symbol */,
+    "FunctionDefinition" /* Non-terminal symbol */,
     "Return" /* Non-terminal symbol */,
     "Expression" /* Non-terminal symbol */,
     "ArrayIndices" /* Non-terminal symbol */,
-    "UnaryOp" /* Non-terminal symbol */,
+    "AssertStmt" /* Non-terminal symbol */,
+    "BinaryOp" /* Non-terminal symbol */,
+    "FunctionInvocation" /* Non-terminal symbol */,
     "ActualParameterList" /* Non-terminal symbol */,
+    "Target" /* Non-terminal symbol */,
     "AddSubExp" /* Non-terminal symbol */,
     "MulDivExp" /* Non-terminal symbol */,
-    "NegExp" /* Non-terminal symbol */,
+    "UnaryOp" /* Non-terminal symbol */,
     "Value" /* Non-terminal symbol */,
     "$" /* Terminal symbol */
 );
@@ -1604,33 +2586,33 @@ var labels = new Array(
 info.offset = 0; info.src = src; info.att = new String(); if( !err_off )
 err_off = new Array(); if( !err_la )
 err_la = new Array(); sstack.push( 0 ); vstack.push( 0 ); la = __lex( info ); while( true )
-{ act = 96; for( var i = 0; i < act_tab[sstack[sstack.length-1]].length; i+=2 )
+{ act = 140; for( var i = 0; i < act_tab[sstack[sstack.length-1]].length; i+=2 )
 { if( act_tab[sstack[sstack.length-1]][i] == la )
 { act = act_tab[sstack[sstack.length-1]][i+1]; break;}
 }
 if( _dbg_withtrace && sstack.length > 0 )
 { __dbg_print( "\nState " + sstack[sstack.length-1] + "\n" + "\tLookahead: " + labels[la] + " (\"" + info.att + "\")\n" + "\tAction: " + act + "\n" + "\tSource: \"" + info.src.substr( info.offset, 30 ) + ( ( info.offset + 30 < info.src.length ) ?
 "..." : "" ) + "\"\n" + "\tStack: " + sstack.join() + "\n" + "\tValue stack: " + vstack.join() + "\n" );}
-if( act == 96 )
+if( act == 140 )
 { if( _dbg_withtrace )
 __dbg_print( "Error detected: There is no reduce or shift on the symbol " + labels[la] ); err_cnt++; err_off.push( info.offset - info.att.length ); err_la.push( new Array() ); for( var i = 0; i < act_tab[sstack[sstack.length-1]].length; i+=2 )
 err_la[err_la.length-1].push( labels[act_tab[sstack[sstack.length-1]][i]] ); var rsstack = new Array(); var rvstack = new Array(); for( var i = 0; i < sstack.length; i++ )
 { rsstack[i] = sstack[i]; rvstack[i] = vstack[i];}
-while( act == 96 && la != 49 )
+while( act == 140 && la != 72 )
 { if( _dbg_withtrace )
 __dbg_print( "\tError recovery\n" + "Current lookahead: " + labels[la] + " (" + info.att + ")\n" + "Action: " + act + "\n\n" ); if( la == -1 )
-info.offset++; while( act == 96 && sstack.length > 0 )
+info.offset++; while( act == 140 && sstack.length > 0 )
 { sstack.pop(); vstack.pop(); if( sstack.length == 0 )
-break; act = 96; for( var i = 0; i < act_tab[sstack[sstack.length-1]].length; i+=2 )
+break; act = 140; for( var i = 0; i < act_tab[sstack[sstack.length-1]].length; i+=2 )
 { if( act_tab[sstack[sstack.length-1]][i] == la )
 { act = act_tab[sstack[sstack.length-1]][i+1]; break;}
 }
 }
-if( act != 96 )
+if( act != 140 )
 break; for( var i = 0; i < rsstack.length; i++ )
 { sstack.push( rsstack[i] ); vstack.push( rvstack[i] );}
 la = __lex( info );}
-if( act == 96 )
+if( act == 140 )
 { if( _dbg_withtrace )
 __dbg_print( "\tError recovery failed, terminating parse process..." ); break;}
 if( _dbg_withtrace )
@@ -1651,11 +2633,7 @@ __dbg_print( "\tPerforming semantic action..." ); switch( act )
     break;
     case 1:
     {
-            execute( vstack[ vstack.length - 2 ] );
-                                            if (vstack[ vstack.length - 1 ].length > 2) {
-                                                var strNode = createNode( NODE_CONST, vstack[ vstack.length - 1 ].substring(2,vstack[ vstack.length - 1 ].length) );
-                                                execute( createNode( NODE_OP, OP_ECHO, strNode ) );
-                                            }
+        rval = vstack[ vstack.length - 2 ];
     }
     break;
     case 2:
@@ -1665,209 +2643,252 @@ __dbg_print( "\tPerforming semantic action..." ); switch( act )
     break;
     case 3:
     {
-         rval = createNode( NODE_OP, OP_NONE, vstack[ vstack.length - 2 ], vstack[ vstack.length - 1 ] );
+            
+                                            execute( vstack[ vstack.length - 2 ] );
+                                            if (vstack[ vstack.length - 1 ].length > 2) {
+                                                var strNode = createNode( NODE_CONST, vstack[ vstack.length - 1 ].substring(2,vstack[ vstack.length - 1 ].length) );
+                                                execute( createNode( NODE_OP, OP_ECHO, strNode ) );
+                                            }
+                                        
     }
     break;
     case 4:
     {
-        rval = vstack[ vstack.length - 0 ];
+            
+                                            pstate.classTable[vstack[ vstack.length - 4 ]] =
+                                                createClass( MOD_PUBLIC, vstack[ vstack.length - 4 ], pstate.curAttrs, pstate.curFuns );
+                                            pstate.curAttrs = [];
+                                            pstate.curFuns = [];
+                                        
     }
     break;
     case 5:
     {
-         rval = createNode ( NODE_OP, OP_NONE, vstack[ vstack.length - 2 ], vstack[ vstack.length - 1 ] )
+        rval = vstack[ vstack.length - 2 ];
     }
     break;
     case 6:
     {
-             state.funTable[vstack[ vstack.length - 7 ]] = createFunction( vstack[ vstack.length - 7 ], state.curParams, vstack[ vstack.length - 2 ] );
-                                            // Make sure to clean up param list for next function declaration
-                                            state.curParams = [];
+        rval = vstack[ vstack.length - 2 ];
     }
     break;
     case 7:
     {
-        rval = vstack[ vstack.length - 1 ];
+        rval = vstack[ vstack.length - 0 ];
     }
     break;
     case 8:
     {
-        rval = vstack[ vstack.length - 1 ];
+         rval = MOD_PUBLIC;
     }
     break;
     case 9:
     {
-         rval = createNode( NODE_OP, OP_IF, vstack[ vstack.length - 2 ], vstack[ vstack.length - 1 ] );
+         rval = MOD_PUBLIC;
     }
     break;
     case 10:
     {
-         rval = createNode( NODE_OP, OP_IF_ELSE, vstack[ vstack.length - 4 ], vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+         rval = MOD_PROTECTED;
     }
     break;
     case 11:
     {
-         rval = createNode( NODE_OP, OP_WHILE_DO, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+         rval = MOD_PRIVATE;
     }
     break;
     case 12:
     {
-         rval = createNode( NODE_OP, OP_DO_WHILE, vstack[ vstack.length - 4 ], vstack[ vstack.length - 2 ] );
+         rval = MOD_PUBLIC;
     }
     break;
     case 13:
     {
-         rval = createNode( NODE_OP, OP_ECHO, vstack[ vstack.length - 2 ] );
+         rval = MOD_PUBLIC;
     }
     break;
     case 14:
     {
-         rval = createNode( NODE_OP, OP_ASSIGN, vstack[ vstack.length - 4 ], vstack[ vstack.length - 2 ] );
+         rval = MOD_PROTECTED;
     }
     break;
     case 15:
     {
-         rval = createNode( NODE_OP, OP_ASSIGN_ARR, vstack[ vstack.length - 5 ], vstack[ vstack.length - 4 ], vstack[ vstack.length - 2 ] );
+         rval = MOD_PRIVATE;
     }
     break;
     case 16:
     {
-         rval = vstack[ vstack.length - 2 ];
+             
+                                            pstate.funTable[vstack[ vstack.length - 7 ]] =
+                                                createFunction( vstack[ vstack.length - 7 ], pstate.curParams, vstack[ vstack.length - 2 ] );
+                                            // Make sure to clean up param list
+                                            // for next function declaration
+                                            pstate.curParams = [];
+                                        
     }
     break;
     case 17:
     {
-         rval = createNode( NODE_OP, OP_NONE );
+             
+                                            var fun = createFunction( vstack[ vstack.length - 7 ], pstate.curParams, vstack[ vstack.length - 2 ] );
+                                            pstate.curFuns[vstack[ vstack.length - 7 ]] =
+                                                createMember( vstack[ vstack.length - 8 ], fun );
+                                            // Make sure to clean up param list
+                                            // for next function declaration
+                                            pstate.curParams = [];
+                                        
     }
     break;
     case 18:
     {
-         state.curParams[state.curParams.length] = createNode( NODE_CONST, vstack[ vstack.length - 1 ] );
+        
+                                            pstate.curAttrs[vstack[ vstack.length - 2 ]] = createMember( vstack[ vstack.length - 3 ], vstack[ vstack.length - 2 ] );
+                                        
     }
     break;
     case 19:
     {
-         state.curParams[state.curParams.length] = createNode( NODE_CONST, vstack[ vstack.length - 1 ] );
+         rval = createNode ( NODE_OP, OP_NONE, vstack[ vstack.length - 2 ], vstack[ vstack.length - 1 ] );
     }
     break;
     case 20:
     {
-        rval = vstack[ vstack.length - 0 ];
+        rval = vstack[ vstack.length - 2 ];
     }
     break;
     case 21:
     {
-         rval = createNode( NODE_OP, OP_RETURN, vstack[ vstack.length - 1 ] );
+        rval = vstack[ vstack.length - 2 ];
     }
     break;
     case 22:
     {
-         rval = createNode( NODE_OP, OP_RETURN );
+         rval = createNode( NODE_OP, OP_IF, vstack[ vstack.length - 2 ], vstack[ vstack.length - 1 ] );
     }
     break;
     case 23:
     {
-        rval = vstack[ vstack.length - 1 ];
+         rval = createNode( NODE_OP, OP_IF_ELSE, vstack[ vstack.length - 4 ], vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
     }
     break;
     case 24:
     {
-         rval = createNode( NODE_OP, OP_FCALL, vstack[ vstack.length - 3 ], vstack[ vstack.length - 2 ] );
+         rval = createNode( NODE_OP, OP_WHILE_DO, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
     }
     break;
     case 25:
     {
-         rval = createNode( NODE_OP, OP_FETCH_ARR, vstack[ vstack.length - 2 ], vstack[ vstack.length - 1 ] );
+         rval = createNode( NODE_OP, OP_DO_WHILE, vstack[ vstack.length - 4 ], vstack[ vstack.length - 2 ] );
     }
     break;
     case 26:
     {
-         rval = createNode( NODE_OP, OP_PASS_PARAM, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+         rval = createNode( NODE_OP, OP_ECHO, vstack[ vstack.length - 2 ] );
     }
     break;
     case 27:
     {
-         rval = createNode( NODE_OP, OP_PASS_PARAM, vstack[ vstack.length - 1 ] );
+         rval = createNode( NODE_OP, OP_ASSIGN, vstack[ vstack.length - 4 ], vstack[ vstack.length - 2 ] );
     }
     break;
     case 28:
     {
-        rval = vstack[ vstack.length - 0 ];
+        rval = vstack[ vstack.length - 1 ];
     }
     break;
     case 29:
     {
-         rval = vstack[ vstack.length - 2 ];
+        rval = vstack[ vstack.length - 1 ];
     }
     break;
     case 30:
     {
-         rval = createNode( NODE_OP, OP_EQU, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+         rval = createNode( NODE_OP, OP_ASSIGN_ARR, vstack[ vstack.length - 5 ], vstack[ vstack.length - 4 ], vstack[ vstack.length - 2 ] );
     }
     break;
     case 31:
     {
-         rval = createNode( NODE_OP, OP_LOT, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+         rval = vstack[ vstack.length - 2 ];
     }
     break;
     case 32:
     {
-         rval = createNode( NODE_OP, OP_GRT, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+        
+                                            if (vstack[ vstack.length - 1 ].length > 4) {
+                                                var strNode = createNode( NODE_CONST, vstack[ vstack.length - 1 ].substring(2,vstack[ vstack.length - 1 ].length-2) );
+                                                rval = createNode( NODE_OP, OP_ECHO, strNode );
+                                            }
+                                        
     }
     break;
     case 33:
     {
-         rval = createNode( NODE_OP, OP_LOE, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+        rval = vstack[ vstack.length - 2 ];
     }
     break;
     case 34:
     {
-         rval = createNode( NODE_OP, OP_GRE, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+            
+                                            if (phypeTestSuite && vstack[ vstack.length - 2 ] == "assertEcho") {
+                                                pstate.assertion = createAssertion( ASS_ECHO, vstack[ vstack.length - 1 ] );
+                                            }
+                                        
     }
     break;
     case 35:
     {
-         rval = createNode( NODE_OP, OP_NEQ, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+        
+                                            if (phypeTestSuite && vstack[ vstack.length - 1 ] == "assertFail") {
+                                                pstate.assertion = createAssertion( ASS_FAIL, 0 );
+                                            }
+                                        
     }
     break;
     case 36:
     {
-        rval = vstack[ vstack.length - 1 ];
+        rval = vstack[ vstack.length - 0 ];
     }
     break;
     case 37:
     {
-         rval = createNode( NODE_OP, OP_SUB, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+        
+                                            pstate.curParams[pstate.curParams.length] =
+                                                createNode( NODE_CONST, vstack[ vstack.length - 1 ] );
+                                        
     }
     break;
     case 38:
     {
-         rval = createNode( NODE_OP, OP_ADD, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+        
+                                            pstate.curParams[pstate.curParams.length] =
+                                                createNode( NODE_CONST, vstack[ vstack.length - 1 ] );
+                                        
     }
     break;
     case 39:
     {
-        rval = vstack[ vstack.length - 1 ];
+        rval = vstack[ vstack.length - 0 ];
     }
     break;
     case 40:
     {
-         rval = createNode( NODE_OP, OP_MUL, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+         rval = createNode( NODE_OP, OP_RETURN, vstack[ vstack.length - 1 ] );
     }
     break;
     case 41:
     {
-         rval = createNode( NODE_OP, OP_DIV, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+         rval = createNode( NODE_OP, OP_RETURN );
     }
     break;
     case 42:
     {
-        rval = vstack[ vstack.length - 1 ];
+         rval = vstack[ vstack.length - 2 ];
     }
     break;
     case 43:
     {
-         rval = createNode( NODE_OP, OP_NEG, vstack[ vstack.length - 1 ] );
+        rval = vstack[ vstack.length - 1 ];
     }
     break;
     case 44:
@@ -1877,27 +2898,152 @@ __dbg_print( "\tPerforming semantic action..." ); switch( act )
     break;
     case 45:
     {
-         rval = createNode( NODE_VAR, vstack[ vstack.length - 1 ] );
+         rval = createNode( NODE_OP, OP_FETCH_ARR, vstack[ vstack.length - 2 ], vstack[ vstack.length - 1 ] );
     }
     break;
     case 46:
     {
-         rval = vstack[ vstack.length - 2 ];
+         rval = createNode( NODE_OP, OP_PASS_PARAM, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
     }
     break;
     case 47:
     {
-         rval = createNode( NODE_CONST, vstack[ vstack.length - 1 ] );
+         rval = createNode( NODE_OP, OP_PASS_PARAM, vstack[ vstack.length - 1 ] );
     }
     break;
     case 48:
     {
-         rval = createNode( NODE_CONST, vstack[ vstack.length - 1 ] );
+        rval = vstack[ vstack.length - 0 ];
     }
     break;
     case 49:
     {
+         rval = createNode( NODE_OP, OP_ARR_KEYS_R, vstack[ vstack.length - 4 ], vstack[ vstack.length - 2 ] );
+    }
+    break;
+    case 50:
+    {
+         rval = vstack[ vstack.length - 2 ];
+    }
+    break;
+    case 51:
+    {
+         rval = createNode( NODE_OP, OP_FCALL, vstack[ vstack.length - 3 ], vstack[ vstack.length - 2 ] );
+    }
+    break;
+    case 52:
+    {
+         rval = createNode( NODE_OP, OP_OBJ_FCALL, vstack[ vstack.length - 5 ], vstack[ vstack.length - 3 ], vstack[ vstack.length - 2 ] );
+    }
+    break;
+    case 53:
+    {
+        rval = vstack[ vstack.length - 1 ];
+    }
+    break;
+    case 54:
+    {
+         rval = createNode( NODE_OP, OP_EQU, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 55:
+    {
+         rval = createNode( NODE_OP, OP_LOT, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 56:
+    {
+         rval = createNode( NODE_OP, OP_GRT, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 57:
+    {
+         rval = createNode( NODE_OP, OP_LOE, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 58:
+    {
+         rval = createNode( NODE_OP, OP_GRE, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 59:
+    {
+         rval = createNode( NODE_OP, OP_NEQ, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 60:
+    {
+         rval = createNode( NODE_OP, OP_CONCAT, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 61:
+    {
+        rval = vstack[ vstack.length - 1 ];
+    }
+    break;
+    case 62:
+    {
+         rval = createNode( NODE_OP, OP_SUB, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 63:
+    {
+         rval = createNode( NODE_OP, OP_ADD, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 64:
+    {
+        rval = vstack[ vstack.length - 1 ];
+    }
+    break;
+    case 65:
+    {
+         rval = createNode( NODE_OP, OP_MUL, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 66:
+    {
+         rval = createNode( NODE_OP, OP_DIV, vstack[ vstack.length - 3 ], vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 67:
+    {
+        rval = vstack[ vstack.length - 1 ];
+    }
+    break;
+    case 68:
+    {
+         rval = createNode( NODE_OP, OP_NEG, vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 69:
+    {
+        rval = vstack[ vstack.length - 1 ];
+    }
+    break;
+    case 70:
+    {
+         rval = createNode( NODE_VAR, vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 71:
+    {
+         rval = vstack[ vstack.length - 2 ];
+    }
+    break;
+    case 72:
+    {
          rval = createNode( NODE_CONST, vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 73:
+    {
+         rval = createNode( NODE_INT, vstack[ vstack.length - 1 ] );
+    }
+    break;
+    case 74:
+    {
+         rval = createNode( NODE_FLOAT, vstack[ vstack.length - 1 ] );
     }
     break;
 }
@@ -1927,15 +3073,23 @@ return err_cnt;}
 if (!phypeIn || phypeIn == 'undefined') {
     var phypeIn = function() {
         return prompt( "Please enter a PHP-script to be executed:",
-        "<? $a['test'] = 'foo'; echo $a['test']; ?>" );
+        //    "<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
+            //"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {    $r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
+            "<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
+            /*"<? " +
+            "class test {" +
+            "    private $var;" +
+            "    function hello() { echo 'hello world!'; }" +
+            "}" +
+            "?>"*/
+        );
     };
 }
 
+// Set phypeOut if it is not set.
 if (!phypeOut || phypeOut == 'undefined') {
     var phypeOut = alert;
 }
-
-var str = phypeIn();
 
 /**
 * Creates an echo with non-PHP character data that precedes the first php-tag.
@@ -1956,19 +3110,72 @@ function preParse(str) {
     return res
 }
 
-var error_cnt     = 0;
-var error_off    = new Array();
-var error_la    = new Array();
+// If we are not in our test suite, load all the scripts all at once.
+if (!phypeTestSuite) {
+    var str = phypeIn();
 
-if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 ) {
-    for( i = 0; i < error_cnt; i++ )
-        alert( "Parse error near >"
-            + str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
+    var error_cnt     = 0;
+    var error_off    = new Array();
+    var error_la    = new Array();
+    
+    if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 ) {
+        for(var i=0; i<error_cnt; i++)
+            alert( "Parse error near >"
+                + str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
+    }
+    
+    if (phypeDoc && phypeDoc.open) {
+        phypeDoc.close();
+    }
+}
+// If we are, parse it accordingly
+else if (phpScripts) {
+    for (var i=0; i<phpScripts.length; i++) {
+        var script = phpScripts[i];
+
+        var error_cnt     = 0;
+        var error_off    = new Array();
+        var error_la    = new Array();
+        
+        if (i>0) __parse( preParse(script.code) );
+        
+        phypeEcho = '';
+        
+        var failed = false;
+        var thrownException = null;
+        try {
+            if( ( error_cnt = __parse( preParse(script.code), error_off, error_la ) ) > 0 ) {
+                for(var i=0; i<error_cnt; i++)
+                    throw "Parse error near >"
+                        + script.code.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" ;
+            }
+        } catch(exception) {
+            failed = true;
+            thrownException = exception;
+        }
+
+        switch (pstate.assertion.type) {
+            case ASS_ECHO:
+                if (phypeEcho != pstate.assertion.value)
+                    phypeDoc.write('"'+script.name+'" failed assertion. Expected output: "'+
+                            pstate.assertion.value+'". Actual output: "'+phypeEcho+'".<br/>\n<br/>\n');
+                if (thrownException)
+                    throw thrownException;
+                break;
+            case ASS_FAIL:
+                if (!failed)
+                    phypeDoc.write('"'+script.name+'" failed assertion. Expected script to fail,'+
+                            ' but no exceptions were raised.<br/>\n<br/>\n');
+        }
+        pstate.assertion = null;
+        resetState();
+    }
+    if (phypeDoc && phypeDoc.open) {
+        phypeDoc.write('Testing done!');
+        phypeDoc.close();
+    }
 }
 
-if (phypeDoc && phypeDoc.open) {
-    phypeDoc.close();
-}
 
 ///////////////
 // DEBUGGING //
@@ -2028,7 +3235,8 @@ function var_dump(data,addwhitespace,safety,level) {
         }//end if addwhitespace
     }//end for...in
     if(addwhitespace) {
-        rtrn = '{<br/>' + spaces + rtrn.substr(0,rtrn.length-(2+(level*3))) + '<br/>' + spaces.substr(0,spaces.length-3) + '}';
+        rtrn = '{<br/>' + spaces + rtrn.substr(0,rtrn.length-(2+(level*3))) + '<br/>' +
+                    spaces.substr(0,spaces.length-3) + '}';
     } else {
         rtrn = '{' + rtrn.substr(0,rtrn.length-1) + '}';
     }//end if-else addwhitespace
@@ -2038,6 +3246,9 @@ function var_dump(data,addwhitespace,safety,level) {
     return rtrn;
 }
 
+/**
+* Borrowed from http://ajaxcookbook.org/javascript-debug-log/
+*/
 function log(message) {
     if (!log.window_ || log.window_.closed) {
         var win = window.open("", null, "width=600,height=400," +

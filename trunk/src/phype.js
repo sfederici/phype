@@ -5,11 +5,19 @@ function importScript(scriptName) {
 	script.type = 'text/javascript';
 	script.defer = true;
 	
-	// Insert the created object to the html head element
-	var head = document.getElementsByTagName('head').item(0);
-	head.appendChild(script);
+	// Insert the created object to the body
+	document.body.appendChild(script);
 }
 
-importScript('src/phypeUtils.js');
-importScript('src/phypeLoader.js');
-importScript('src/phypeParser.js');
+window.onload = function() {
+	if (phypeTestSuite) {
+		prefix = '../';
+		importScript(prefix+'src/phypeUtils.js');
+		importScript(prefix+'src/phypeTestSuiteLoader.js');
+		importScript(prefix+'src/phypeParser.js');
+	} else {
+		importScript('src/phypeUtils.js');
+		importScript('src/phypeLoader.js');
+		importScript('src/phypeParser.js');
+	}
+}
