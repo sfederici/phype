@@ -9,7 +9,7 @@
   # [Conclusions]
 
 = The Phype Project =
-Phype is a virtual machine for PHP written in !JavaScript. Using the JSCC automatic parser generator, and a context free PHP grammar, we create a LALR(1) parser for PHP. This is in turn interpreted by out interpreter, which runs PHP code directly in the browser.
+Phype is a virtual machine for PHP written in !JavaScript. Using the [http://jscc.jmksf.com/ JSCC] automatic parser generator, and a context free PHP grammar, we create a LALR(1) parser for PHP. This is in turn interpreted by out interpreter, which runs PHP code directly in the browser.
 
 == First Steps ==
 The first plan for Phype was, as the current version, based on !JavaScript and the PHP-extension _parsekit_. Parsekit translates PHP scripts into opcode arrays, containing ZEND opcodes. These opcode arrays were then converted to JSON objects, to enable easier access.
@@ -36,7 +36,7 @@ At first we need to read PHP-code and parse it, then we will implement the basic
 Below is an itemized list, from start to end, of the project milestones.
  * Reading PHP-code within `<script>`-tags: *Done*.
  * Parsing PHP via LALR(1)-translatable grammar: *Done*.
-   * We are using [http://jscc.jmksf.com/ JSCC] for translating our version of a context free PHP grammar into a PHP-parser.
+   * We are using JSCC for translating our version of a context free PHP grammar into a PHP-parser.
    * We have found inspiration in [http://www.phpcompiler.org/doc/latest/grammar.html PHC's abstract PHP grammar] for our context free grammar.
  * Interpreting PHP:
    * Echoing: *Done*.
