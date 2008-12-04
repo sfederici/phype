@@ -7,7 +7,7 @@ PhypeDoc is the wikified version of this document, and below a table of contents
 
 == Table of contents ==
   # !PhypeDoc
-  # [ThePhypeProject]
+  # [ThePhypeProject The Phype Project]
   # [Implementation]
   # [Testing]
   # [Conclusions]
