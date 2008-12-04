@@ -189,6 +189,20 @@ function createClass( mod, name, attrs, funs ) {
 	return c;
 }
 
+/**
+ * Create a deep clone of a value
+ */
+function cloneValue( value ) {
+	if(value == null || typeof(value) != 'object')
+		return value;
+
+	var tmp = {};
+	for(var key in value)
+		tmp[key] = cloneValue(value[key]);
+
+	return tmp;
+}
+
 
 /////////////////
 // VAR LINKING //
@@ -204,7 +218,7 @@ var linker = {
 
 		if (typeof(state.symTables[scope]) != 'object')
 			state.symTables[scope] = {};
-		
+
 		var refTable = linker.getRefTableByVal(val);
 		var prefix = linker.getConsDefByVal(val);
 		
@@ -225,11 +239,15 @@ var linker = {
 		
 		// Check that the entry exists. Initialize it if it does not.
 		var arrTableKey = scope+'#'+varName;
-		if (typeof(state.arrTable[arrTableKey]) != 'object') {
-			state.arrTable[arrTableKey] = {};
+		if (!state.arrTable[arrTableKey]) {
+			var valArr = {};
+			valArr[key.value] = val;
+			state.arrTable[arrTableKey] = createValue( T_ARRAY, valArr );
 		}
-			
-		state.arrTable[arrTableKey][key.value] = val;
+		// Else insert the array key into the existing entry
+		else {
+			state.arrTable[arrTableKey]["value"][key.value] = val;
+		}
 	},
 	
 	assignArrMulti : function(varName, keys, val, scope) {
@@ -245,16 +263,15 @@ var linker = {
 		
 		// Check that the entry exists. Initialize it if it does not.
 		var arrTableKey = scope+'#'+varName;
-		if (typeof(state.arrTable[arrTableKey]) != 'object') {
-			state.arrTable[arrTableKey] = {};
+		if (!state.arrTable[arrTableKey])
+			state.arrTable[arrTableKey] = createValue( T_ARRAY, {} );
+
+		var keyRef = 'state.arrTable[arrTableKey]["value"]';
+		for ( var i=0; i<keys.length; i++ ) {
+			eval('if (!'+keyRef+'["'+keys[i].value+'"]) '+keyRef+'["'+keys[i].value+'"] = createValue( T_ARRAY, {} );');
+			keyRef = keyRef+'["'+keys[i].value+'"]["value"]';
 		}
 
-		var keyRef = 'state.arrTable[arrTableKey]';
-		for ( var i=0; i<keys.length; i++ ) {
-			eval('if (!'+keyRef+') '+keyRef+' = {};');
-			keyRef = keyRef+'['+keys[i].value+']';
-		}
-		
 		keyRef = keyRef+' = val;';
 		eval(keyRef);
 	},
@@ -272,12 +289,12 @@ var linker = {
 			var lookupStr = state.symTables[scope][varName];
 			lookupStr = lookupStr.substr(5,lookupStr.length);
 			
-			return refTable[lookupStr];
+			return cloneValue(refTable[lookupStr]);
 		} else if (typeof(state.symTables[cons.global])=='string') {
 			var lookupStr = state.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
-			return refTable[lookupStr];
+			return cloneValue(refTable[lookupStr]);
 		}
 
 		throw varNotFound(varName);
@@ -302,24 +319,24 @@ var linker = {
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 
 			// Look up the value of the variable
-			if (state.arrTable[lookupStr] && state.arrTable[lookupStr][key.value])
-				result = state.arrTable[lookupStr][key.value];
+			if (state.arrTable[lookupStr] && state.arrTable[lookupStr]["value"][key.value])
+				result = state.arrTable[lookupStr]["value"][key.value];
 		} else if (typeof(state.symTables[cons.global])=='string') {
 			var lookupStr = state.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
 			// Look up the value of the variable
-			if (state.arrTable[lookupStr] && state.arrTable[lookupStr][key.value])
-				result = state.arrTable[lookupStr][key.value];
+			if (state.arrTable[lookupStr] && state.arrTable[lookupStr]["value"][key.value])
+				result = state.arrTable[lookupStr]["value"][key.value];
 		} else {
 			throw varNotFound(varName);
 		}
 
 		// Look up the potentially recursively defined variable.
 		if (varName != cleanVarName) {
-			return linker.getValue(result);
+			return cloneValue(linker.getValue(result));
 		} else {
-			return result;
+			return cloneValue(result);
 		}
 	},
 	
@@ -342,9 +359,9 @@ var linker = {
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 
 			// Generate key lookup-command
-			var keyRef = 'state.arrTable[lookupStr]';
+			var keyRef = 'state.arrTable[lookupStr]["value"]';
 			for ( var i=0; i<keys.length; i++ ) {
-				keyRef = keyRef+'['+keys[i].value+']';
+				keyRef = keyRef+'["'+keys[i].value+'"]["value"]';
 			}
 
 			// Look up the value of the variable
@@ -355,9 +372,9 @@ var linker = {
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
 			// Generate key lookup-command
-			var keyRef = 'state.arrTable[lookupStr]';
+			var keyRef = 'state.arrTable[lookupStr]["value"]';
 			for ( var i=0; i<keys.length; i++ ) {
-				keyRef = keyRef+'['+keys[i].value+']';
+				keyRef = keyRef+'["'+keys[i].value+'"]["value"]';
 			}
 			
 			// Look up the value of the variable
@@ -369,9 +386,9 @@ var linker = {
 		
 		// Look up the potentially recursively defined variable.
 		if (varName != cleanVarName) {
-			return linker.getValue(result);
+			return cloneValue(linker.getValue(result));
 		} else {
-			return result;
+			return cloneValue(result);
 		}
 	},
 	
@@ -498,8 +515,14 @@ var linker = {
 		
 		return symName.substring(0,5);
 	},
+}
+
+
+
+var classLinker = {
 	
 }
+
 
 
 /////////////////////////////
@@ -530,7 +553,7 @@ var OP_ECHO			= 8;
 var OP_ASSIGN_ARR	= 9;
 var OP_FETCH_ARR	= 10;
 var OP_ARR_KEYS_R	= 11;
-var OP_CONCAT		= 12;
+var OP_OBJ_FCALL	= 12;
 var OP_EQU			= 50;
 var OP_NEQ			= 51;
 var OP_GRT			= 52;
@@ -542,6 +565,7 @@ var OP_SUB			= 57;
 var OP_DIV			= 58;
 var OP_MUL			= 59;
 var OP_NEG			= 60;
+var OP_CONCAT		= 61;
 
 var MOD_PUBLIC		= 0;
 var MOD_PROTECTED	= 1;
@@ -825,12 +849,27 @@ var ops = {
 		return arrKeys;
 	},
 	
-	// OP_CONCAT
+	// OP_OBJ_NEW
 	'12' : function(node) {
-		var leftChild = execute( node.children[0] );
-		var rightChild = execute( node.children[1] );
-
-		return createValue( T_CONST, leftChild.value+rightChild.value );
+		// Look up class in class table
+		
+		// Instantiate attributes
+		
+		// Get and execute constructor (if any)
+		
+		// Return the instantiated object
+	},
+	
+	// OP_OBJ_FCALL
+	'13' : function(node) {
+		var target = execute( node.children[0] );
+		
+		// Check if function name is recursively defined
+		var funName = linker.linkRecursively(node.children[0]);
+		
+		if (target.type == T_OBJECT) {
+			// Look up function in class table, execute it via OP_FCALL
+		}
 	},
 	
 	// OP_EQU
@@ -980,6 +1019,14 @@ var ops = {
 		var resultNode = createValue(T_CONST, result);
 
 		return resultNode;
+	},
+	
+	// OP_CONCAT
+	'61' : function(node) {
+		var leftChild = execute( node.children[0] );
+		var rightChild = execute( node.children[1] );
+
+		return createValue( T_CONST, leftChild.value+rightChild.value );
 	}
 }
 
@@ -1058,7 +1105,8 @@ function execute( node ) {
 	'\*'
 	'\('
 	'\)'
-	'#'
+	'->'
+	'::'
 	'\$[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
 									Variable
 										[* %match = %match.substr(1,%match.length-1); *]
@@ -1198,8 +1246,7 @@ Return:		RETURN Expression			[* %% = createNode( NODE_OP, OP_RETURN, %2 ); *]
 
 Expression:	'(' Expression ')'			[* %% = %2; *]
 		|	BinaryOp
-		|	FunctionInvoke ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
+		|	FunctionInvocation
 		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
 		;
 
@@ -1209,11 +1256,21 @@ ActualParameterList:
 		|	Expression					[* %% = createNode( NODE_OP, OP_PASS_PARAM, %1 ); *]
 		|
 		;
-		
+
 ArrayIndices:
 			ArrayIndices '[' Expression ']'
 										[* %% = createNode( NODE_OP, OP_ARR_KEYS_R, %1, %3 ); *]
 		|	'[' Expression ']'			[* %% = %2; *]
+		;
+
+FunctionInvocation:
+			FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
+		|	Target '->' FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, %1, %3, %4 ); *]
+		;
+		
+Target:		Expression
 		;
 
 BinaryOp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
@@ -1257,12 +1314,13 @@ if (!phypeIn || phypeIn == 'undefined') {
 		return prompt( "Please enter a PHP-script to be executed:",
 			//"<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
 			//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
-			"<? " +
+			"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; ?>"
+			/*"<? " +
 			"class test {" +
 			"	private $var;" +
 			"	function hello() { echo 'hello world!'; }" +
 			"}" +
-			"?>"
+			"?>"*/
 		);
 	};
 }
@@ -1397,4 +1455,5 @@ function log(message) {
 function var_log(variable) {
 	log(var_dump(variable));
 }
+var_log(state.arrTable);
 *]
