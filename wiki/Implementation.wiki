@@ -1,7 +1,10 @@
 #summary Description of the implementation of Phype
 #labels Phase-Implementation
-
-[PhypeDoc Back to the PhypeDoc Table of Contents]
-
+== Table of contents ==
+  # [PhypeDoc]
+  # [ThePhypeProject The Phype Project]
+  # !Implementation
+  # [Testing]
+  # [Conclusions]
 = Implementation =
 *Placeholder*
