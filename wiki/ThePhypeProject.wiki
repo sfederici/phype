@@ -27,6 +27,9 @@ As mentioned, parsekit outputs PHP scripts to an array of ZEND opcodes. During t
 
 These hidden variables, coupled with our array implementation, meant that we ourselves had to implement a lot of hidden variables in these arrays.
 
+=== JSCC ===
+*_Why did we choose JSCC_*
+
 == Planning ==
 This is an overview of the goals and progress of the Phype project. These milestones were adapted from the first ZEND incarnation of the project.
 
