@@ -5,7 +5,10 @@
 
 // If defined, this variable tells whether we should parse and check assertions.
 var phypeTestSuite;
+// Contains scripts to execute
 var phpScripts;
+
+// Constants used for keeping track of states and variables.
 var cons = {
     global : '.global',
     objGlobal : '.objGlobal',
@@ -15,7 +18,9 @@ var cons = {
     unset : '.uns#'
 }
 
+// State object.
 var pstate = {
+    // ACTUAL VALUES AND OBJECTS
     /**
      * Sym table for looking up values.
      */
@@ -36,12 +41,31 @@ var pstate = {
     /**
      * Table for keeping actual objects
      */
-    objTable : {},
+    objList : [],
     
+    
+    // FORMAL DECLARATIONS
+    /**
+     * Function table
+     */
+    funTable : {},
+    
+    /**
+     * Class table
+     */
+    classTable : {},
+    
+    
+    // TEMPORARY STATE TRACKING VARIABLES
     /**
      * Variable for keeping track of currently executing function.
      */
     curFun : cons.global,
+    
+    /**
+     * This variable contains the name of the class within whose scope we're performing actions.
+     */
+    curClass : '',
     
     /**
      * Variable for keeping track of formal parameters for a function declaration.
@@ -54,25 +78,10 @@ var pstate = {
     passedParams : 0,
     
     /**
-     * This variable contains the name of the class currently being defined.
-     */
-    curDefClass : '',
-    
-    /**
      * These variables keeps track of current members of the class being defined.
      */
     curAttrs : [],
     curFuns : [],
-    
-    /**
-     * Function table
-     */
-    funTable : {},
-    
-    /**
-     * Class table
-     */
-    classTable : {},
     
     /**
      * Variable telling whether a termination event has been received (i.e. a return).
@@ -84,6 +93,8 @@ var pstate = {
      */
     'return' : '',
     
+    
+    // TEST SUITE VARIABLES
     /**
      * Keeps track of assertions.
      */
@@ -96,6 +107,10 @@ function resetState() {
     pstate = clone(origState);
 }
 
+
+///////////////////
+// STATE OBJECTS //
+///////////////////
 function NODE() {
     var type;
     var value;
@@ -537,9 +552,27 @@ var linker = {
 }
 
 
-
+///////////////////
+// CLASS LINKING //
+///////////////////
 var classLinker = {
-    
+    createObjectFromClassName : function(classDef) {
+        // Init object and add it to the list of objects.
+        var obj = new VAL();
+        obj.type = T_OBJECT;
+        obj.value = classDef.name;
+        var objListLength = pstate.objList.length;
+        pstate.objList.push(obj);
+        
+        // Init variable list
+        for (var i=0; i<classDef.attrs; i++) {
+            var vName = classDef.attrs[i].member.children[0];
+            var vVal = classDef.attrs[i].member.children[1];
+            if (!vVal || vVal == 'undefined')
+                vVal = null;
+            pstate.symTable[objListLength+'::'+vName] = vVal;
+        }
+    }
 }
 
 
@@ -607,6 +640,14 @@ var ASS_FAIL        = 1;
 ////////////////
 // EXCEPTIONS //
 ////////////////
+function classDefNotFound(className) {
+    return 'No class definition found: '+className;
+}
+
+function funRedeclare(funName) {
+    return 'Cannot redeclare '+funName;
+}
+
 function expectedArrNotFound(varName) {
     return 'The variable is not an array: '+funName;
 }
@@ -716,7 +757,7 @@ var ops = {
     
     // OP_FCALL
     '5' : function (node) {
-        // pstate preservation
+        // State preservation
         var prevPassedParams = pstate.passedParams;
         pstate.passedParams = 0;
         
@@ -725,10 +766,11 @@ var ops = {
         
         var prevFun = pstate.curFun;
         
+        // Set the name of the function (possibly with class name as prefix)
         if (funName.type == T_CONST)
-            pstate.curFun = funName.value;
+            pstate.curFun = pstate.curClass+funName.value;
         else if (typeof(funName) == 'string')
-            pstate.curFun = funName;
+            pstate.curFun = pstate.curClass+funName;
         else
             throw funNameMustBeString(funName.type);
 
@@ -752,7 +794,7 @@ var ops = {
         for ( var i=0; i<f.params.length; i++ )
             linker.unlinkVar( f.params[i] );
         
-        // pstate roll-back
+        // State roll-back
         pstate.passedParams = prevPassedParams;
         pstate.curFun = prevFun;
         var ret = pstate['return'];
@@ -892,26 +934,41 @@ var ops = {
     
     // OP_OBJ_NEW
     '12' : function(node) {
+        // Lookup potentially recursively defined class name
+        var className = linker.linkRecursively(node.children[0]);
+        
         // Look up class in class table
         var realClass = classTable[node.children[0]];
+        if (!realClass || realClass == 'undefined') {
+            throw classDefNotFound(node.children[0]);
+        }
         
         // Instantiate attributes
+        classLinker.createObjectFromClass(realClass);
         
-        // Get and execute constructor (if any)
+        // Set state
+        pstate.curClass = className+'::';
+        
+        // Get and execute constructor
+        var construct = createNode( NODE_OP, OP_FCALL, className, node.children[1] );
+        execute( construct );
+        
+        //State rollback
+        pstate.curClass = '';
         
         // Return the instantiated object
     },
     
     // OP_OBJ_FCALL
     '13' : function(node) {
-        var target = execute( node.children[0] );
+        /*var target = execute( node.children[0] );
         
         // Check if function name is recursively defined
         var funName = linker.linkRecursively(node.children[0]);
         
         if (target.type == T_OBJECT) {
             // Look up function in class table, execute it via OP_FCALL
-        }
+        }*/
     },
     
     // OP_EQU
@@ -2655,10 +2712,12 @@ __dbg_print( "\tPerforming semantic action..." ); switch( act )
     case 4:
     {
             
+                                            pstate.curClass = vstack[ vstack.length - 4 ]+'::';
                                             pstate.classTable[vstack[ vstack.length - 4 ]] =
                                                 createClass( MOD_PUBLIC, vstack[ vstack.length - 4 ], pstate.curAttrs, pstate.curFuns );
                                             pstate.curAttrs = [];
                                             pstate.curFuns = [];
+                                            pstate.curClass = '';
                                         
     }
     break;
@@ -2720,6 +2779,10 @@ __dbg_print( "\tPerforming semantic action..." ); switch( act )
     case 16:
     {
              
+                                            // Check that the function is not defined twice.
+                                            if (pstate.funTable[vstack[ vstack.length - 7 ]]) {
+                                                throw funRedeclare(vstack[ vstack.length - 7 ]);
+                                            }
                                             pstate.funTable[vstack[ vstack.length - 7 ]] =
                                                 createFunction( vstack[ vstack.length - 7 ], pstate.curParams, vstack[ vstack.length - 2 ] );
                                             // Make sure to clean up param list
@@ -2731,6 +2794,11 @@ __dbg_print( "\tPerforming semantic action..." ); switch( act )
     case 17:
     {
              
+                                            // Check that the function is not defined twice within
+                                            // the same object
+                                            if (pstate.curClass && pstate.curFuns[pstate.curClass+vstack[ vstack.length - 7 ]]) {
+                                                throw funRedeclare(pstate.curClass+vstack[ vstack.length - 7 ]);
+                                            }
                                             var fun = createFunction( vstack[ vstack.length - 7 ], pstate.curParams, vstack[ vstack.length - 2 ] );
                                             pstate.curFuns[vstack[ vstack.length - 7 ]] =
                                                 createMember( vstack[ vstack.length - 8 ], fun );
@@ -3109,6 +3177,11 @@ function preParse(str) {
     
     return res
 }
+
+
+/////////////
+// PARSING //
+/////////////
 
 // If we are not in our test suite, load all the scripts all at once.
 if (!phypeTestSuite) {
