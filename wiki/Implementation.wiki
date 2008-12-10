@@ -12,13 +12,14 @@
 == Optimizations ==
 
 === Direct branching ===
-When we execute opcodes, we branch directly into a JSON-object containing our opcodes, rather than using a switch-based solution.
+_TO-DO: FIND DOCUMENTATION THAT JSON LOOKUPS IS FASTER THAN SWITCH_
 
-*TO-DO: FIND DOCUMENTATION THAT JSON LOOKUPS IS FASTER THAN SWITCH*
+When we execute opcodes, we branch directly into a JSON-object containing our opcodes, rather than using a switch-based solution.
 
 === Object representation ===
 Each object points to an overall class-table. Functions are not represented in the objects, but are referenced in the class table.
 
 === Byte-code generation of javascript-functions ===
 _(NOT YET IMPLEMENTED)_
+
 When javascript code is generated using Javascript's `eval`-function, the code is implicitly generated and stored as byte-codes, und thus functions as a JIT-compilation scheme.
