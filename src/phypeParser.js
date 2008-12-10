@@ -264,7 +264,7 @@ function createAssertion( type, value ) {
 var linker = {
     assignVar : function(varName, val, scope) {
         if (!scope)
-            scope = pstate.curFun;
+            scope = pstate.curClass+pstate.curFun;
 
         if (typeof(pstate.symTables[scope]) != 'object')
             pstate.symTables[scope] = {};
@@ -279,7 +279,7 @@ var linker = {
     
     assignArr : function(varName, key, val, scope) {
         if (!scope)
-            scope = pstate.curFun;
+            scope = pstate.curClass+pstate.curFun;
         
         if (typeof(pstate.symTables[scope]) != 'object')
             pstate.symTables[scope] = {};
@@ -303,7 +303,7 @@ var linker = {
     
     assignArrMulti : function(varName, keys, val, scope) {
         if (!scope)
-            scope = pstate.curFun;
+            scope = pstate.curClass+pstate.curFun;
         
         if (typeof(pstate.symTables[scope]) != 'object')
             pstate.symTables[scope] = {};
@@ -329,7 +329,7 @@ var linker = {
 
     getValue : function(varName, scope) {
         if (!scope)
-            scope = pstate.curFun;
+            scope = pstate.curClass+pstate.curFun;
         
         // Look up the potentially recursively defined variable.
         varName = linker.linkRecursively(varName);
@@ -353,7 +353,7 @@ var linker = {
     
     getArrValue : function(varName, key, scope) {
         if (!scope)
-            scope = pstate.curFun;
+            scope = pstate.curClass+pstate.curFun;
         
         var cleanVarName = varName.match(/[^\$]/);
         
@@ -393,7 +393,7 @@ var linker = {
     
     getArrValueMulti : function(varName, keys, scope) {
         if (!scope)
-            scope = pstate.curFun;
+            scope = pstate.curClass+pstate.curFun;
         
         var cleanVarName = varName.match(/[^\$]/);
         
@@ -460,7 +460,7 @@ var linker = {
     
     unlinkVar : function(varName, scope) {
         if (!scope)
-            scope = pstate.curFun;
+            scope = pstate.curClass+pstate.curFun;
         
         var prefix = linker.getConsDefByVar(varName);
         if (prefix == cons.unset)
@@ -488,7 +488,7 @@ var linker = {
     
     getRefTableByVar : function(varName, scope) {
         if (!scope)
-            scope = pstate.curFun;
+            scope = pstate.curClass+pstate.curFun;
         
         if (typeof(pstate.symTables[scope])!='object')
             pstate.symTables[scope] = {};
@@ -549,7 +549,7 @@ var linker = {
     
     getConsDefByVar : function(varName, scope) {
         if (!scope)
-            scope = pstate.curFun;
+            scope = pstate.curClass+pstate.curFun;
         
         if (typeof(pstate.symTables[scope])!='object')
             pstate.symTables[scope] = {};
@@ -610,6 +610,26 @@ var classLinker = {
         }
         
         delete obj;
+    },
+    
+    checkVisibility : function(invokerClassName, targetClassName, targetMemberName) {
+        // get MOD
+        var_log(pstate.classTable);
+        var_log(targetClassName+' ' +targetMemberName);
+        var mod = -1;
+        var fun = pstate.classTable[targetClassName]['funs'][targetMemberName];
+        if (fun) mod = fun.mod;
+        else mod = pstate.classTable[targetClassName]['attrs'][targetMemberName];
+        switch (mod) {
+            case MOD_PUBLIC:
+                return true;
+            case MOD_PRIVATE:
+                return (invokerClassName == targetClassName);
+            case MOD_PROTECTED:
+                if (invokerClassName == targetClassName)
+                    return true;
+                else throw 'Inheritance not yet supported.';
+        }
     }
 }
 
@@ -714,6 +734,29 @@ function funNameMustBeString(intType) {
             break;
     }
     return 'Function name must be string. Found: '+type;
+}
+
+function invocationTargetInvalid(intType) {
+    var type = '';
+    switch (intType) {
+        case T_FLOAT:
+        case T_BOOLEAN:
+        case T_INT:
+        case T_CONST:
+            type = 'Const';
+            break;
+        case T_ARRAY:
+            type = 'Array';
+            break;
+        default:
+            type = 'Unknown';
+            break;
+    }
+    return 'The target of an invocation must be an object. Found: '+type;
+}
+
+function memberNotVisible(memName) {
+    return 'Call to a restricted member: '+memName;
 }
 
 function valInvalid(varName, refType) {
@@ -1038,14 +1081,64 @@ var ops = {
     
     // OP_OBJ_FCALL
     '13' : function(node) {
-        /*var target = execute( node.children[0] );
+        var target = execute( node.children[0] );
+        if (target.type != T_OBJECT) {
+            throw invocationTargetInvalid(target.type);
+        }
         
         // Check if function name is recursively defined
-        var funName = linker.linkRecursively(node.children[0]);
+        var funName = linker.linkRecursively(node.children[1]);
         
-        if (target.type == T_OBJECT) {
-            // Look up function in class table, execute it via OP_FCALL
-        }*/
+        // Check that the function is visible to the invoker.
+        var targetClass = pstate.objList[target.value.objListEntry];
+        if (!classLinker.checkVisibility(pstate.curClass, targetClass, funName)) {
+            throw memberNotVisible(funName);
+        }
+        
+        // Invoke function
+        var f = pstate.classTable[targetClass]['funs'][funName]['member'];
+        {
+            // State preservation
+            var prevPassedParams = pstate.passedParams;
+            pstate.passedParams = 0;
+            // Check if function name is recursively defined
+            var funName = linker.linkRecursively(node.children[0]);
+            var prevFun = pstate.curFun;
+            var prevClass = pstate.curClass;
+            
+            // Set executing function and class
+            pstate.curFun = pstate.curClass+funName;
+            pstate.curClass = pstate.targetClass;
+    
+            // Initialize parameters for the function scope
+            if ( node.children[2] )
+                execute( node.children[2] );
+            
+            // Execute function
+            if ( f && f.params.length <= pstate.passedParams ) {
+                for ( var i=0; i<f.nodes.length; i++ )
+                    execute( f.nodes[i] );
+            } else {
+                if (!f) {
+                    throw funNotFound(funName);
+                } else if (!(f.params.length <= pstate.passedParams))
+                    throw funInvalidArgCount(f.params.length);
+            }
+            
+            // Clear parameters for the function scope
+            for ( var i=0; i<f.params.length; i++ )
+                linker.unlinkVar( f.params[i] );
+            
+            // State roll-back
+            pstate.passedParams = prevPassedParams;
+            pstate.curFun = prevFun;
+            pstate.curFun = prevClass;
+            var ret = pstate['return'];
+            pstate['return'] = 0;
+            
+            // Return the value saved in .return in our valTable.
+            return ret;
+        }
     },
     
     // OP_EQU
@@ -3259,6 +3352,7 @@ if (!phypeIn || phypeIn == 'undefined') {
             "    function hello() { echo 'hello world!'; }" +
             "}" +
             "$a = new test();" +
+            "$a->hello();" +
             "?>"
         );
     };
