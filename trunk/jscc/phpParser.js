@@ -140,6 +140,11 @@ function CLASS() {
 	var funs;
 }
 
+function OBJECT() {
+	var objListEntry;
+	var references;
+}
+
 function ASSERTION() {
 	var type;
 	var value;
@@ -211,6 +216,17 @@ function createClass( mod, name, attrs, funs ) {
 }
 
 /**
+ * Creates an object.
+ */
+function createObject( objListEntry ) {
+	var obj = new OBJECT();
+	obj.objListEntry = objListEntry;
+	obj.references = 0;
+	
+	return obj;
+}
+
+/**
  * Create a deep clone of a value.
  * 
  * YES, it's expensive!! So is it in PHP.
@@ -257,6 +273,7 @@ var linker = {
 		var prefix = linker.getConsDefByVal(val);
 		
 		pstate.symTables[scope][varName] = prefix+scope+'#'+varName
+
 		refTable[scope+'#'+varName] = val;
 	},
 	
@@ -463,7 +480,7 @@ var linker = {
 			case T_ARRAY:
 				return pstate.arrTable;
 			case T_OBJECT:
-				return pstate.objTable;
+				return pstate.objList;
 			default:
 				return null;
 		}
@@ -493,7 +510,7 @@ var linker = {
 			case cons.arr:
 				return pstate.arrTable;
 			case cons.obj:
-				return pstate.objTable;
+				return pstate.objList;
 			default:
 				return null;
 		}
@@ -502,7 +519,6 @@ var linker = {
 	linkRecursively : function(varName) {
 		if (typeof(varName) != 'string' && varName.type != T_CONST)
 			return varName;
-		
 		else if (typeof(varName) == 'string') {
 			varNameVal = varName;
 		} else varNameVal = varName.value;
@@ -552,17 +568,15 @@ var linker = {
 }
 
 
-///////////////////
-// CLASS LINKING //
-///////////////////
+//////////////////////////
+// CLASS/OBJECT LINKING //
+//////////////////////////
 var classLinker = {
-	createObjectFromClassName : function(classDef) {
+	createObjectFromClass : function(classDef) {
 		// Init object and add it to the list of objects.
-		var obj = new VAL();
-		obj.type = T_OBJECT;
-		obj.value = classDef.name;
 		var objListLength = pstate.objList.length;
-		pstate.objList.push(obj);
+		var obj = createObject( objListLength );
+		pstate.objList.push(classDef.name);
 		
 		// Init variable list
 		for (var i=0; i<classDef.attrs; i++) {
@@ -572,6 +586,30 @@ var classLinker = {
 				vVal = null;
 			pstate.symTable[objListLength+'::'+vName] = vVal;
 		}
+		
+		return obj;
+	},
+	
+	decrementObjectRef : function(obj) {
+		obj.references--;
+		if (obj.references <= 0) {
+			classLinker.deleteObject(obj);
+		}
+	},
+	
+	deleteObject : function(obj) {
+		var className = pstate.objList[obj.objListEntry];
+		
+		// Remove from object list
+		delete pstate.objList[obj.objListEntry];
+		
+		// Clear attributes
+		for (var i=0; i<classDef.attrs; i++) {
+			var vName = classDef.attrs[i].member.children[0];
+			delete pstate.symTable[obj.objListEntry+'::'+vName];
+		}
+		
+		delete obj;
 	}
 }
 
@@ -609,7 +647,8 @@ var OP_ECHO			= 8;
 var OP_ASSIGN_ARR	= 9;
 var OP_FETCH_ARR	= 10;
 var OP_ARR_KEYS_R	= 11;
-var OP_OBJ_FCALL	= 12;
+var OP_OBJ_NEW		= 12;
+var OP_OBJ_FCALL	= 13;
 var OP_EQU			= 50;
 var OP_NEQ			= 51;
 var OP_GRT			= 52;
@@ -703,10 +742,27 @@ var ops = {
 	
 	// OP_ASSIGN
 	'0' : function(node) {
+		// Look up potentially recursive variable name
+		var varName = linker.linkRecursively(node.children[0]);
+		
+		// Check if the variable we are trying to assign to already contains an object;
+		// decrement the reference count for the object if this is the case.
+		var oldVal = null;
+		try {
+			oldVal = linker.getValue(varName);
+		} catch (exception) {
+			if (exception!=varNotFound(varName))
+				throw exception;
+			else
+				oldVal = false;
+		}
+		
+		if (oldVal && oldVal.type == T_OBJECT)
+			classLinker.decrementObjectRef(linker.getValue(varName));
+		
 		try {
 			var val = execute( node.children[1] );
 		} catch(exception) {
-			varName = linker.linkRecursively(node.children[0]);
 			// If we get an undefined variable error, and the undefined variable is the variable
 			// we are currently defining, initialize the current variable to 0, and try assigning again.
 			if (exception == varNotFound(varName)) {
@@ -716,6 +772,12 @@ var ops = {
 				throw exception;
 			}
 		}
+		
+		// If we are assigning an object, increment its reference count.
+		if (val.type == T_OBJECT) {
+			val.value.references++;
+		}
+		
 		linker.assignVar( node.children[0], val );
 		
 		return val;
@@ -938,25 +1000,40 @@ var ops = {
 		var className = linker.linkRecursively(node.children[0]);
 		
 		// Look up class in class table
-		var realClass = classTable[node.children[0]];
+		var realClass = pstate.classTable[node.children[0]];
 		if (!realClass || realClass == 'undefined') {
 			throw classDefNotFound(node.children[0]);
 		}
 		
 		// Instantiate attributes
-		classLinker.createObjectFromClass(realClass);
+		var obj = classLinker.createObjectFromClass(realClass);
 		
 		// Set state
 		pstate.curClass = className+'::';
 		
 		// Get and execute constructor
-		var construct = createNode( NODE_OP, OP_FCALL, className, node.children[1] );
-		execute( construct );
+		var constructInvoke = null;
+		// First look for __construct-function (higher precedence than class-named function as
+		// constructor)
+		if (realClass['funs']['__construct']) {
+			constructInvoke = createNode( NODE_OP, OP_FCALL, className, '__construct' );
+		}
+		// Then look for class-named function as constructor
+		else if (realClass['funs'][node.children[1]]) {
+			constructInvoke = createNode( NODE_OP, OP_FCALL, className, node.children[1] );
+		}
+		
+		// Only invoke the constructor if it is defined
+		if (constructInvoke)
+			execute( constructInvoke );
 		
 		//State rollback
 		pstate.curClass = '';
 		
+		var_log(pstate.objList);
+		
 		// Return the instantiated object
+		return createValue( T_OBJECT, obj );
 	},
 	
 	// OP_OBJ_FCALL
@@ -1178,7 +1255,7 @@ function execute( node ) {
 	"DO"
 	"ECHO"
 	"RETURN"
-	"NEW"
+	"NEW"							NewToken
 	"CLASS"							ClassToken
 	"PUBLIC"						PublicToken
 	"VAR"							VarToken
@@ -1375,6 +1452,8 @@ Return:		RETURN Expression			[* %% = createNode( NODE_OP, OP_RETURN, %2 ); *]
 Expression:	'(' Expression ')'			[* %% = %2; *]
 		|	BinaryOp
 		|	FunctionInvocation
+		|	NewToken FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_OBJ_NEW, %2, %3 ); *]
 		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
 		;
 
@@ -1392,9 +1471,17 @@ ArrayIndices:
 		;
 
 FunctionInvocation:
+			SimpleFunctionInvocation
+		|	PrefixedFunctionInvocation
+		;
+		
+SimpleFunctionInvocation:
 			FunctionInvoke ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
-		|	Target '->' FunctionInvoke ActualParameterList ')'
+		;
+
+PrefixedFunctionInvocation:
+			Target '->' FunctionInvoke ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, %1, %3, %4 ); *]
 		;
 		
@@ -1442,13 +1529,14 @@ if (!phypeIn || phypeIn == 'undefined') {
 		return prompt( "Please enter a PHP-script to be executed:",
 		//	"<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
 			//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
-			"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
-			/*"<? " +
+			//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
+			"<? " +
 			"class test {" +
 			"	private $var;" +
 			"	function hello() { echo 'hello world!'; }" +
 			"}" +
-			"?>"*/
+			"$a = new test();" +
+			"?>"
 		);
 	};
 }
