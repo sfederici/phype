@@ -669,6 +669,7 @@ var OP_FETCH_ARR	= 10;
 var OP_ARR_KEYS_R	= 11;
 var OP_OBJ_NEW		= 12;
 var OP_OBJ_FCALL	= 13;
+var OP_OBJ_FETCH	= 14;
 var OP_EQU			= 50;
 var OP_NEQ			= 51;
 var OP_GRT			= 52;
@@ -707,6 +708,10 @@ function funRedeclare(funName) {
 	return 'Cannot redeclare '+funName;
 }
 
+function thisRedeclare() {
+	return 'Cannot redeclare $this';
+}
+
 function expectedArrNotFound(varName) {
 	return 'The variable is not an array: '+funName;
 }
@@ -740,7 +745,6 @@ function invocationTargetInvalid(intType) {
 	var type = '';
 	switch (intType) {
 		case T_FLOAT:
-		case T_BOOLEAN:
 		case T_INT:
 		case T_CONST:
 			type = 'Const';
@@ -785,6 +789,10 @@ var ops = {
 	
 	// OP_ASSIGN
 	'0' : function(node) {
+		// $this cannot be redeclared.
+		if (varName == 'this')
+			throw thisRedeclare();
+			
 		// Look up potentially recursive variable name
 		var varName = linker.linkRecursively(node.children[0]);
 		
@@ -1081,16 +1089,22 @@ var ops = {
 	
 	// OP_OBJ_FCALL
 	'13' : function(node) {
-		var target = execute( node.children[0] );
-		if (target.type != T_OBJECT) {
-			throw invocationTargetInvalid(target.type);
-		}
-		
 		// Check if function name is recursively defined
 		var funName = linker.linkRecursively(node.children[1]);
+
+		var targetClass = null;
+		var target = execute( node.children[0] );
+		if (target == 'this') {
+			targetClass = pstate.curClass;
+		} else {
+			if (target.type != T_OBJECT) {
+				throw invocationTargetInvalid(target.type);
+			}
+			
+			targetClass = pstate.objList[target.value.objListEntry];
+		}
 		
 		// Check that the function is visible to the invoker.
-		var targetClass = pstate.objList[target.value.objListEntry];
 		if (!classLinker.checkVisibility(pstate.curClass, targetClass, funName)) {
 			throw memberNotVisible(funName);
 		}
@@ -1139,6 +1153,11 @@ var ops = {
 			// Return the value saved in .return in our valTable.
 			return ret;
 		}
+	},
+	
+	// OP_OBJ_FETCH
+	'14' : function(node) {
+		
 	},
 	
 	// OP_EQU
@@ -1525,6 +1544,7 @@ AssertStmt:	ClassName String
 										*]
 		|
 		;
+		
 FormalParameterList:
 			FormalParameterList ',' Variable
 										[*
@@ -1542,12 +1562,23 @@ Return:		RETURN Expression			[* %% = createNode( NODE_OP, OP_RETURN, %2 ); *]
 		|	RETURN						[* %% = createNode( NODE_OP, OP_RETURN ); *]
 		;
 
-Expression:	'(' Expression ')'			[* %% = %2; *]
-		|	BinaryOp
-		|	FunctionInvocation
+Target:		Expression
+		;
+
+Expression:	BinaryOp
+		|	Target '->' FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, %1, %3, %4 ); *]
+		|	Target '->' Expression '(' ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, %1, %3, %5 ); *]
+		|	FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
+		|	Expression '(' ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_FCALL, %1, %3 ); *]
 		|	NewToken FunctionInvoke ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_OBJ_NEW, %2, %3 ); *]
+		|	Target '->' Expression		[* %% = createNode( NODE_OP, OP_OBJ_FETCH, %2, %3 ); *]
 		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
+		|	'(' Expression ')'			[* %% = %2; *]
 		;
 
 ActualParameterList:
@@ -1561,24 +1592,6 @@ ArrayIndices:
 			ArrayIndices '[' Expression ']'
 										[* %% = createNode( NODE_OP, OP_ARR_KEYS_R, %1, %3 ); *]
 		|	'[' Expression ']'			[* %% = %2; *]
-		;
-
-FunctionInvocation:
-			SimpleFunctionInvocation
-		|	PrefixedFunctionInvocation
-		;
-		
-SimpleFunctionInvocation:
-			FunctionInvoke ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
-		;
-
-PrefixedFunctionInvocation:
-			Target '->' FunctionInvoke ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, %1, %3, %4 ); *]
-		;
-		
-Target:		Expression
 		;
 
 BinaryOp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
