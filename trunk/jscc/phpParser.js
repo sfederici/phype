@@ -61,11 +61,8 @@ var pstate = {
 	 * Variable for keeping track of currently executing function.
 	 */
 	curFun : cons.global,
-	
-	/**
-	 * This variable contains the name of the class within whose scope we're performing actions.
-	 */
 	curClass : '',
+	curObj : -1,
 	
 	/**
 	 * Variable for keeping track of formal parameters for a function declaration.
@@ -131,6 +128,7 @@ function VAL() {
 function MEMBER() {
 	var mod;
 	var member;
+	var init;
 }
 
 function CLASS() {
@@ -194,10 +192,12 @@ function createValue( type, value ) {
 /**
  * Creates member objects for the class model.
  */
-function createMember( mod, member ) {
+function createMember( mod, member, init ) {
 	var m = new MEMBER();
 	m.mod = mod;
 	m.member = member;
+	if (init)
+		m.init = init;
 	
 	return m;
 }
@@ -264,7 +264,7 @@ function createAssertion( type, value ) {
 var linker = {
 	assignVar : function(varName, val, scope) {
 		if (!scope)
-			scope = pstate.curClass+pstate.curFun;
+			scope = pstate.curFun;
 
 		if (typeof(pstate.symTables[scope]) != 'object')
 			pstate.symTables[scope] = {};
@@ -279,7 +279,7 @@ var linker = {
 	
 	assignArr : function(varName, key, val, scope) {
 		if (!scope)
-			scope = pstate.curClass+pstate.curFun;
+			scope = pstate.curFun;
 		
 		if (typeof(pstate.symTables[scope]) != 'object')
 			pstate.symTables[scope] = {};
@@ -303,7 +303,7 @@ var linker = {
 	
 	assignArrMulti : function(varName, keys, val, scope) {
 		if (!scope)
-			scope = pstate.curClass+pstate.curFun;
+			scope = pstate.curFun;
 		
 		if (typeof(pstate.symTables[scope]) != 'object')
 			pstate.symTables[scope] = {};
@@ -329,7 +329,7 @@ var linker = {
 
 	getValue : function(varName, scope) {
 		if (!scope)
-			scope = pstate.curClass+pstate.curFun;
+			scope = pstate.curFun;
 		
 		// Look up the potentially recursively defined variable.
 		varName = linker.linkRecursively(varName);
@@ -340,12 +340,22 @@ var linker = {
 			var lookupStr = pstate.symTables[scope][varName];
 			lookupStr = lookupStr.substr(5,lookupStr.length);
 			
-			return clone(refTable[lookupStr]);
+			var ret = null;
+			if (refTable === pstate.objList)
+				ret = pstate.objList[lookupStr];
+			else
+				ret = clone(refTable[lookupStr]);
+			return ret;
 		} else if (typeof(pstate.symTables[cons.global])=='string') {
 			var lookupStr = pstate.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
-			return clone(refTable[lookupStr]);
+			var ret = null;
+			if (refTable === pstate.objList)
+				ret = objList[lookupStr];
+			else
+				ret = clone(refTable[lookupStr]);
+			return ret;
 		}
 
 		throw varNotFound(varName);
@@ -353,7 +363,7 @@ var linker = {
 	
 	getArrValue : function(varName, key, scope) {
 		if (!scope)
-			scope = pstate.curClass+pstate.curFun;
+			scope = pstate.curFun;
 		
 		var cleanVarName = varName.match(/[^\$]/);
 		
@@ -393,7 +403,7 @@ var linker = {
 	
 	getArrValueMulti : function(varName, keys, scope) {
 		if (!scope)
-			scope = pstate.curClass+pstate.curFun;
+			scope = pstate.curFun;
 		
 		var cleanVarName = varName.match(/[^\$]/);
 		
@@ -460,7 +470,7 @@ var linker = {
 	
 	unlinkVar : function(varName, scope) {
 		if (!scope)
-			scope = pstate.curClass+pstate.curFun;
+			scope = pstate.curFun;
 		
 		var prefix = linker.getConsDefByVar(varName);
 		if (prefix == cons.unset)
@@ -486,9 +496,22 @@ var linker = {
 		}
 	},
 	
+	getRefTableByConsDef : function(consDef) {
+		switch (consDef) {
+			case cons.val:
+				return pstate.valTable;
+			case cons.arr:
+				return pstate.arrTable;
+			case cons.obj:
+				return pstate.objList;
+			default:
+				return null;
+		}
+	},
+	
 	getRefTableByVar : function(varName, scope) {
 		if (!scope)
-			scope = pstate.curClass+pstate.curFun;
+			scope = pstate.curFun;
 		
 		if (typeof(pstate.symTables[scope])!='object')
 			pstate.symTables[scope] = {};
@@ -549,7 +572,7 @@ var linker = {
 	
 	getConsDefByVar : function(varName, scope) {
 		if (!scope)
-			scope = pstate.curClass+pstate.curFun;
+			scope = pstate.curFun;
 		
 		if (typeof(pstate.symTables[scope])!='object')
 			pstate.symTables[scope] = {};
@@ -584,7 +607,12 @@ var classLinker = {
 			var vVal = classDef.attrs[i].member.children[1];
 			if (!vVal || vVal == 'undefined')
 				vVal = null;
-			pstate.symTable[objListLength+'::'+vName] = vVal;
+			
+			var lookupStr = objListLength+'::'+vName;
+			pstate.symTable[objListLength+'::'+vName] = linker.getConsDefByVal(vVal)+lookupStr;
+			
+			var refTable = linker.getRefTableByVal(vVal);
+			refTable[lookupStr] = vVal;
 		}
 		
 		return obj;
@@ -606,6 +634,9 @@ var classLinker = {
 		// Clear attributes
 		for (var i=0; i<classDef.attrs; i++) {
 			var vName = classDef.attrs[i].member.children[0];
+			var r = pstate.symTable[obj.objListEntry+'::'+vName]
+			var refTable = linker.getRefTableByConsDef(r.substring(0,5));
+			delete refTable[r.substring(5,r.length)];
 			delete pstate.symTable[obj.objListEntry+'::'+vName];
 		}
 		
@@ -614,12 +645,20 @@ var classLinker = {
 	
 	checkVisibility : function(invokerClassName, targetClassName, targetMemberName) {
 		// get MOD
-		var_log(pstate.classTable);
-		var_log(targetClassName+' ' +targetMemberName);
 		var mod = -1;
 		var fun = pstate.classTable[targetClassName]['funs'][targetMemberName];
-		if (fun) mod = fun.mod;
-		else mod = pstate.classTable[targetClassName]['attrs'][targetMemberName];
+		if (fun)
+			mod = fun.mod;
+		else {
+			attr = pstate.classTable[targetClassName]['attrs'][targetMemberName];
+			if (!attr) return false;
+			mod = attr.mod;
+		}
+		
+		var_log(pstate.classTable);
+		var_log(pstate.funTable);
+		var_log(targetMemberName);
+	
 		switch (mod) {
 			case MOD_PUBLIC:
 				return true;
@@ -757,6 +796,10 @@ function invocationTargetInvalid(intType) {
 			break;
 	}
 	return 'The target of an invocation must be an object. Found: '+type;
+}
+
+function fetchTargetInvalid() {
+	return 'The target of the variable access was not an object.';
 }
 
 function memberNotVisible(memName) {
@@ -1061,6 +1104,7 @@ var ops = {
 		
 		// Set state
 		pstate.curClass = className+'::';
+		pstate.curObj = obj.objListEntry;
 		
 		// Get and execute constructor
 		var constructInvoke = null;
@@ -1080,6 +1124,7 @@ var ops = {
 		
 		//State rollback
 		pstate.curClass = '';
+		pstate.curObj = -1;
 		
 		var_log(pstate.objList);
 		
@@ -1089,19 +1134,26 @@ var ops = {
 	
 	// OP_OBJ_FCALL
 	'13' : function(node) {
+		// The function name can be defined by an expression. Execute it.
+		if (typeof(node.children[1]) != 'string')
+			node.children[1] = execute(node.children[1]);
+		
 		// Check if function name is recursively defined
 		var funName = linker.linkRecursively(node.children[1]);
 
 		var targetClass = null;
+		var targetObj = -1;
 		var target = execute( node.children[0] );
 		if (target == 'this') {
 			targetClass = pstate.curClass;
+			targetObj = pstate.curObj;
 		} else {
 			if (target.type != T_OBJECT) {
 				throw invocationTargetInvalid(target.type);
 			}
 			
 			targetClass = pstate.objList[target.value.objListEntry];
+			targetObj = target.value.objListEntry;
 		}
 		
 		// Check that the function is visible to the invoker.
@@ -1119,10 +1171,12 @@ var ops = {
 			var funName = linker.linkRecursively(node.children[0]);
 			var prevFun = pstate.curFun;
 			var prevClass = pstate.curClass;
+			var prevObj = pstate.curObj;
 			
 			// Set executing function and class
 			pstate.curFun = pstate.curClass+funName;
 			pstate.curClass = pstate.targetClass;
+			pstate.curObj = targetObj;
 	
 			// Initialize parameters for the function scope
 			if ( node.children[2] )
@@ -1146,7 +1200,8 @@ var ops = {
 			// State roll-back
 			pstate.passedParams = prevPassedParams;
 			pstate.curFun = prevFun;
-			pstate.curFun = prevClass;
+			pstate.curClass = prevClass;
+			pstate.curObj = prevObj;
 			var ret = pstate['return'];
 			pstate['return'] = 0;
 			
@@ -1157,7 +1212,36 @@ var ops = {
 	
 	// OP_OBJ_FETCH
 	'14' : function(node) {
+		// The variable name can be defined by an expression. Execute it.
+		if (typeof(node.children[1]) != 'string')
+			node.children[1] = execute(node.children[1]);
 		
+		// Check if function name is recursively defined
+		var varName = linker.linkRecursively(node.children[1]);
+
+		var targetClass = null;
+		var targetObj = -1;
+		var target = execute( node.children[0] );
+		if (target == 'this') {
+			targetClass = pstate.curClass;
+			targetObj = pstate.curObj;
+		} else {
+			if (target.type != T_OBJECT) {
+				throw invocationTargetInvalid(target.type);
+			}
+			
+			targetClass = pstate.objList[target.value.objListEntry];
+			targetObj = target.value.objListEntry;
+		}
+		
+		if (targetObj == -1)
+			throw fetchTargetInvalid();
+			
+		var lookupStr = symTables[targetObj+'::'+varName];
+		if (lookupStr)
+			var refTable = linker.getRefTableByConsDef(lookupStr.substring(0,5));
+		if (refTable)
+			return refTable[lookupStr];
 	},
 	
 	// OP_EQU
@@ -1318,7 +1402,8 @@ var ops = {
 }
 
 function execute( node ) {
-	// Reset term-event boolean and terminate currently executing action, if a terminate-event was received.
+	// Reset term-event boolean and terminate currently executing action, if a terminate-event
+	// was received.
 	if (pstate.term) {
 		pstate.term = false;
 		return;
@@ -1492,8 +1577,7 @@ ClassFunctionDefinition:
 												throw funRedeclare(pstate.curClass+%2);
 											}
 											var fun = createFunction( %2, pstate.curParams, %7 );
-											pstate.curFuns[%2] =
-												createMember( %1, fun );
+											pstate.curFuns[%2] = createMember( %1, fun );
 											// Make sure to clean up param list
 											// for next function declaration
 											pstate.curParams = [];
@@ -1503,6 +1587,10 @@ ClassFunctionDefinition:
 AttributeDefinition:
 			AttributeMod Variable ';'	[*
 											pstate.curAttrs[%2] = createMember( %1, %2 );
+										*]
+		|	AttributeMod Variable '=' Expression ';'
+										[*
+											pstate.curAttrs[%2] = createMember( %1, %2, %4 );
 										*]
 		;
 
@@ -1566,6 +1654,8 @@ Target:		Expression
 		;
 
 Expression:	BinaryOp
+		|	NewToken FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_OBJ_NEW, %2, %3 ); *]
 		|	Target '->' FunctionInvoke ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, %1, %3, %4 ); *]
 		|	Target '->' Expression '(' ActualParameterList ')'
@@ -1574,8 +1664,6 @@ Expression:	BinaryOp
 										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
 		|	Expression '(' ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_FCALL, %1, %3 ); *]
-		|	NewToken FunctionInvoke ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_OBJ_NEW, %2, %3 ); *]
 		|	Target '->' Expression		[* %% = createNode( NODE_OP, OP_OBJ_FETCH, %2, %3 ); *]
 		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
 		|	'(' Expression ')'			[* %% = %2; *]
@@ -1638,9 +1726,9 @@ if (!phypeIn || phypeIn == 'undefined') {
 			//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
 			"<? " +
 			"class test {" +
-			"	private $var;" +
+			"	private $var = 'foo';" +
 			"	function hello() { echo 'hello world!'; }" +
-			"}" +
+			"} " +
 			"$a = new test();" +
 			"$a->hello();" +
 			"?>"
