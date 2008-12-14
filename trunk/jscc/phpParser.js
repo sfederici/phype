@@ -249,7 +249,6 @@ function createAssertion( type, value ) {
 /////////////////
 // VAR LINKING //
 /////////////////
-
 /**
  * For linking variable references to values, preserving scopes.
  */
@@ -616,20 +615,16 @@ var classLinker = {
 		
 		// Init variable list
 		for (var attr in classDef.attrs) {
-			var_log(classDef);
-			var_log(attr);
 			var vName = classDef.attrs[attr].member;
-			var vVal = classDef.attrs[attr].init;
+			var vVal = execute( classDef.attrs[attr].init );
 			if (!vVal || vVal == 'undefined')
 				vVal = null;
 			
 			var lookupStr = objListLength+'::'+vName;
-			pstate.symTables[objListLength+'::'+vName] = linker.getConsDefByVal(vVal)+lookupStr;
+			pstate.symTables['.global'][objListLength+'::'+vName] = linker.getConsDefByVal(vVal)+lookupStr;
 			
 			var refTable = linker.getRefTableByVal(vVal);
-			if (refTable != pstate.valTable) {
-				throw nonConstVarInit(classDef.name);
-			}
+
 			refTable[lookupStr] = vVal;
 		}
 		
@@ -652,10 +647,10 @@ var classLinker = {
 		// Clear attributes
 		for (var i=0; i<classDef.attrs; i++) {
 			var vName = classDef.attrs[i].member.children[0];
-			var r = pstate.symTables[obj.objListEntry+'::'+vName]
+			var r = pstate.symTables['.global'][obj.objListEntry+'::'+vName]
 			var refTable = linker.getRefTableByConsDef(r.substring(0,5));
 			delete refTable[r.substring(5,r.length)];
-			delete pstate.symTables[obj.objListEntry+'::'+vName];
+			delete pstate.symTables['.global'][obj.objListEntry+'::'+vName];
 		}
 		
 		delete obj;
@@ -665,8 +660,7 @@ var classLinker = {
 		// get MOD
 		var mod = -1;
 		var fun = pstate.classTable[targetClassName]['funs'][targetMemberName];
-		
-		
+
 		if (fun)
 			mod = fun.mod;
 		else {
@@ -777,10 +771,6 @@ function funRedeclare(funName) {
 	return 'Cannot redeclare '+funName;
 }
 
-function thisRedeclare() {
-	return 'Cannot redeclare $this';
-}
-
 function expectedArrNotFound(varName) {
 	return 'The variable is not an array: '+funName;
 }
@@ -834,6 +824,15 @@ function fetchTargetInvalid() {
 
 function memberNotVisible(memName) {
 	return 'Call to a restricted member: '+memName;
+}
+
+function nonConstAttrInit(varName, className) {
+	return 'Initialization value for attributes must be constant expressions.' +
+			' A non-constant expression was used for "'+varName+'" in "'+className+'"';
+}
+
+function thisRedeclare() {
+	return 'Cannot redeclare $this';
 }
 
 function valInvalid(varName, refType) {
@@ -958,9 +957,9 @@ var ops = {
 		
 		// Set the name of the function (possibly with class name as prefix)
 		if (funName.type == T_CONST)
-			pstate.curFun = pstate.curClass+funName.value;
+			pstate.curFun = pstate.curClass+'::'+funName.value;
 		else if (typeof(funName) == 'string') 
-			pstate.curFun = pstate.curClass+funName;
+			pstate.curFun = pstate.curClass+'::'+funName;
 		else 
 			throw funNameMustBeString(funName.type);
 
@@ -1137,7 +1136,7 @@ var ops = {
 		var obj = classLinker.createObjectFromClass(realClass);
 		
 		// Set state
-		pstate.curClass = className+'::';
+		pstate.curClass = className;
 		pstate.curObj = obj.objListEntry;
 		
 		// Get and execute constructor
@@ -1175,7 +1174,7 @@ var ops = {
 		
 		// Check if function name is recursively defined
 		var funName = linker.linkRecursively(node.children[1]);
-
+		
 		var targetClass = null;
 		var targetObj = -1;
 		var target = execute( node.children[0] );
@@ -1191,28 +1190,30 @@ var ops = {
 			targetObj = target.value.objListEntry;
 		}
 		
-		// Check that the function is visible to the invoker.
-		if (!classLinker.checkVisibility(pstate.curClass, targetClass, funName)) {
-			throw memberNotVisible(funName);
-		}
-		
 		// Invoke function
-		var f = pstate.classTable[targetClass]['funs'][funName]['member'];
 		{
 			// State preservation
 			var prevPassedParams = pstate.passedParams;
 			pstate.passedParams = 0;
+			
 			// Check if function name is recursively defined
-			var funName = linker.linkRecursively(node.children[0]);
 			var prevFun = pstate.curFun;
 			var prevClass = pstate.curClass;
 			var prevObj = pstate.curObj;
 			
 			// Set executing function and class
-			pstate.curFun = pstate.curClass+funName;
-			pstate.curClass = pstate.targetClass;
+			pstate.curFun = pstate.curClass+'::'+funName;
+			pstate.curClass = targetClass;
 			pstate.curObj = targetObj;
 	
+			// Check visibility
+			if (!classLinker.checkVisibility(pstate.curClass, targetClass, funName)) {
+				throw memberNotVisible(funName);
+			}
+			
+			// Fetch function
+			var f = pstate.classTable[targetClass]['funs'][funName]['member'];
+			
 			// Initialize parameters for the function scope
 			if ( node.children[2] )
 				execute( node.children[2] );
@@ -1269,15 +1270,19 @@ var ops = {
 			targetObj = target.value.objListEntry;
 		}
 		
+		if (!classLinker.checkVisibility(pstate.curClass, targetClass.value.classDef, varName)) {
+			throw memberNotVisible(varName);
+		}
+		
 		if (targetObj == -1)
 			throw fetchTargetInvalid();
 			
-		var lookupStr = pstate.symTables[targetObj+'::'+varName];
+		var lookupStr = pstate.symTables['.global'][targetObj+'::'+varName];
 		if (lookupStr)
 			var refTable = linker.getRefTableByConsDef(lookupStr.substring(0,5));
 		
 		if (refTable)
-			return refTable[lookupStr];
+			return refTable[lookupStr.substring(5,lookupStr.length)];
 	},
 	
 	// OP_ATTR_ASSIGN
@@ -1951,9 +1956,16 @@ else if (phpScripts) {
 	}
 }
 
+/*
+log('SymTables');
 var_log(pstate.symTables);
+log('ObjList');
 var_log(pstate.objList);
+log('ObjMapping');
 var_log(pstate.objMapping);
+log('Values');
+var_log(pstate.valTable);
+*/
 
 ///////////////
 // DEBUGGING //
