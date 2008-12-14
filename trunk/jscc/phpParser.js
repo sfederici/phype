@@ -21,22 +21,12 @@ var cons = {
 // State object.
 var pstate = {
 	// ACTUAL VALUES AND OBJECTS
-	/**
-	 * Sym table for looking up values.
-	 */
 	symTables : {
 		'.global' : {}
 	},
-	
-	/**
-	 * Table for keeping actual values
-	 */
 	valTable : {},
-	
-	/**
-	 * Table for keeping actual arrays
-	 */
 	arrTable : {},
+	objMapping : {},
 	
 	/**
 	 * Table for keeping actual objects
@@ -141,6 +131,7 @@ function CLASS() {
 function OBJECT() {
 	var objListEntry;
 	var references;
+	var classDef;
 }
 
 function ASSERTION() {
@@ -218,10 +209,11 @@ function createClass( mod, name, attrs, funs ) {
 /**
  * Creates an object.
  */
-function createObject( objListEntry ) {
+function createObject( objListEntry, classDefName ) {
 	var obj = new OBJECT();
 	obj.objListEntry = objListEntry;
 	obj.references = 0;
+	obj.classDef = classDefName;
 	
 	return obj;
 }
@@ -274,7 +266,14 @@ var linker = {
 		
 		pstate.symTables[scope][varName] = prefix+scope+'#'+varName
 
-		refTable[scope+'#'+varName] = val;
+		// If we are assigning an object, make a reference to the assigned object,
+		// and increment the object's reference count.
+		if (val.type == T_OBJECT) {
+			var entry = val.value.objListEntry;
+			pstate.objList[entry].value.references++;
+			refTable[scope+'#'+varName] = entry;
+		} else
+			refTable[scope+'#'+varName] = val;
 	},
 	
 	assignArr : function(varName, key, val, scope) {
@@ -333,7 +332,11 @@ var linker = {
 		
 		// Look up the potentially recursively defined variable.
 		varName = linker.linkRecursively(varName);
-
+		
+		if (varName == 'this') {
+			return pstate.objList[pstate.curObj];
+		}
+		
 		var refTable = linker.getRefTableByVar(varName);
 		
 		if (typeof(pstate.symTables[scope])=='object' && typeof(pstate.symTables[scope][varName])=='string') {
@@ -341,24 +344,33 @@ var linker = {
 			lookupStr = lookupStr.substr(5,lookupStr.length);
 			
 			var ret = null;
-			if (refTable === pstate.objList)
-				ret = pstate.objList[lookupStr];
+			if (refTable == pstate.objMapping)
+				ret = pstate.objList[refTable[lookupStr]];
 			else
 				ret = clone(refTable[lookupStr]);
+				
 			return ret;
 		} else if (typeof(pstate.symTables[cons.global])=='string') {
 			var lookupStr = pstate.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
 			var ret = null;
-			if (refTable === pstate.objList)
-				ret = objList[lookupStr];
+			if (refTable == pstate.objMapping)
+				ret = pstate.objList[refTable[lookupStr]];
 			else
 				ret = clone(refTable[lookupStr]);
 			return ret;
 		}
 
 		throw varNotFound(varName);
+	},
+	
+	getValueFromObj : function(targetObj, varName, scope) {
+		// Look up the potentially recursively defined variable.
+		varName = linker.linkRecursively(varName);
+		varName = targetObj+'::'+varName;
+		
+		return linker.getValue(varName);
 	},
 	
 	getArrValue : function(varName, key, scope) {
@@ -380,8 +392,9 @@ var linker = {
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 
 			// Look up the value of the variable
-			if (pstate.arrTable[lookupStr] && pstate.arrTable[lookupStr]["value"][key.value])
+			if (pstate.arrTable[lookupStr] && pstate.arrTable[lookupStr]["value"][key.value]) {
 				result = pstate.arrTable[lookupStr]["value"][key.value];
+			}
 		} else if (typeof(pstate.symTables[cons.global])=='string') {
 			var lookupStr = pstate.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
@@ -395,7 +408,7 @@ var linker = {
 
 		// Look up the potentially recursively defined variable.
 		if (varName != cleanVarName) {
-			return clone(linker.getValue(result));
+			return linker.getValue(result);
 		} else {
 			return clone(result);
 		}
@@ -447,7 +460,7 @@ var linker = {
 		
 		// Look up the potentially recursively defined variable.
 		if (varName != cleanVarName) {
-			return clone(linker.getValue(result));
+			return linker.getValue(result);
 		} else {
 			return clone(result);
 		}
@@ -490,7 +503,7 @@ var linker = {
 			case T_ARRAY:
 				return pstate.arrTable;
 			case T_OBJECT:
-				return pstate.objList;
+				return pstate.objMapping;
 			default:
 				return null;
 		}
@@ -503,7 +516,7 @@ var linker = {
 			case cons.arr:
 				return pstate.arrTable;
 			case cons.obj:
-				return pstate.objList;
+				return pstate.objMapping;
 			default:
 				return null;
 		}
@@ -533,7 +546,7 @@ var linker = {
 			case cons.arr:
 				return pstate.arrTable;
 			case cons.obj:
-				return pstate.objList;
+				return pstate.objMapping;
 			default:
 				return null;
 		}
@@ -598,20 +611,25 @@ var classLinker = {
 	createObjectFromClass : function(classDef) {
 		// Init object and add it to the list of objects.
 		var objListLength = pstate.objList.length;
-		var obj = createObject( objListLength );
-		pstate.objList.push(classDef.name);
+		var obj = createObject( objListLength, classDef.name );
+		pstate.objList.push( createValue( T_OBJECT, obj ) );
 		
 		// Init variable list
-		for (var i=0; i<classDef.attrs; i++) {
-			var vName = classDef.attrs[i].member.children[0];
-			var vVal = classDef.attrs[i].member.children[1];
+		for (var attr in classDef.attrs) {
+			var_log(classDef);
+			var_log(attr);
+			var vName = classDef.attrs[attr].member;
+			var vVal = classDef.attrs[attr].init;
 			if (!vVal || vVal == 'undefined')
 				vVal = null;
 			
 			var lookupStr = objListLength+'::'+vName;
-			pstate.symTable[objListLength+'::'+vName] = linker.getConsDefByVal(vVal)+lookupStr;
+			pstate.symTables[objListLength+'::'+vName] = linker.getConsDefByVal(vVal)+lookupStr;
 			
 			var refTable = linker.getRefTableByVal(vVal);
+			if (refTable != pstate.valTable) {
+				throw nonConstVarInit(classDef.name);
+			}
 			refTable[lookupStr] = vVal;
 		}
 		
@@ -634,10 +652,10 @@ var classLinker = {
 		// Clear attributes
 		for (var i=0; i<classDef.attrs; i++) {
 			var vName = classDef.attrs[i].member.children[0];
-			var r = pstate.symTable[obj.objListEntry+'::'+vName]
+			var r = pstate.symTables[obj.objListEntry+'::'+vName]
 			var refTable = linker.getRefTableByConsDef(r.substring(0,5));
 			delete refTable[r.substring(5,r.length)];
-			delete pstate.symTable[obj.objListEntry+'::'+vName];
+			delete pstate.symTables[obj.objListEntry+'::'+vName];
 		}
 		
 		delete obj;
@@ -647,6 +665,8 @@ var classLinker = {
 		// get MOD
 		var mod = -1;
 		var fun = pstate.classTable[targetClassName]['funs'][targetMemberName];
+		
+		
 		if (fun)
 			mod = fun.mod;
 		else {
@@ -654,10 +674,6 @@ var classLinker = {
 			if (!attr) return false;
 			mod = attr.mod;
 		}
-		
-		var_log(pstate.classTable);
-		var_log(pstate.funTable);
-		var_log(targetMemberName);
 	
 		switch (mod) {
 			case MOD_PUBLIC:
@@ -669,6 +685,19 @@ var classLinker = {
 					return true;
 				else throw 'Inheritance not yet supported.';
 		}
+	},
+	
+	assignObjToVar : function(varName, obj, scope) {
+		if (!scope)
+			scope = pstate.curFun;
+			
+		if (typeof(pstate.symTables[scope]) != 'object')
+			pstate.symTables[scope] = {};
+
+		var prefix = linker.getConsDefByVal(val);
+		
+		pstate.symTables[scope][varName] = prefix+scope+'#'+varName
+		
 	}
 }
 
@@ -709,6 +738,7 @@ var OP_ARR_KEYS_R	= 11;
 var OP_OBJ_NEW		= 12;
 var OP_OBJ_FCALL	= 13;
 var OP_OBJ_FETCH	= 14;
+var OP_ATTR_ASSIGN	= 15;
 var OP_EQU			= 50;
 var OP_NEQ			= 51;
 var OP_GRT			= 52;
@@ -852,7 +882,7 @@ var ops = {
 		}
 		
 		if (oldVal && oldVal.type == T_OBJECT)
-			classLinker.decrementObjectRef(linker.getValue(varName));
+			classLinker.decrementObjectRef(linker.getValue(varName).value);
 		
 		try {
 			var val = execute( node.children[1] );
@@ -868,8 +898,12 @@ var ops = {
 		}
 		
 		// If we are assigning an object, increment its reference count.
-		if (val.type == T_OBJECT) {
-			val.value.references++;
+		if (oldVal.value != val.value) {
+			if (oldVal && oldVal.type == T_OBJECT)
+				classLinker.decrementObjectRef(linker.getValue(varName));
+			
+			if (val.type == T_OBJECT && oldVal.value != val.value)
+				val.value.references++;
 		}
 		
 		linker.assignVar( node.children[0], val );
@@ -1126,14 +1160,15 @@ var ops = {
 		pstate.curClass = '';
 		pstate.curObj = -1;
 		
-		var_log(pstate.objList);
-		
 		// Return the instantiated object
 		return createValue( T_OBJECT, obj );
 	},
 	
 	// OP_OBJ_FCALL
 	'13' : function(node) {
+		if (!node.children[0])
+			execute( createNode(NODE_OP, OP_FCALL, node.children[1], node.children[2]) );
+		
 		// The function name can be defined by an expression. Execute it.
 		if (typeof(node.children[1]) != 'string')
 			node.children[1] = execute(node.children[1]);
@@ -1152,7 +1187,7 @@ var ops = {
 				throw invocationTargetInvalid(target.type);
 			}
 			
-			targetClass = pstate.objList[target.value.objListEntry];
+			targetClass = pstate.objList[target.value.objListEntry].value.classDef;
 			targetObj = target.value.objListEntry;
 		}
 		
@@ -1218,7 +1253,7 @@ var ops = {
 		
 		// Check if function name is recursively defined
 		var varName = linker.linkRecursively(node.children[1]);
-
+		
 		var targetClass = null;
 		var targetObj = -1;
 		var target = execute( node.children[0] );
@@ -1237,11 +1272,75 @@ var ops = {
 		if (targetObj == -1)
 			throw fetchTargetInvalid();
 			
-		var lookupStr = symTables[targetObj+'::'+varName];
+		var lookupStr = pstate.symTables[targetObj+'::'+varName];
 		if (lookupStr)
 			var refTable = linker.getRefTableByConsDef(lookupStr.substring(0,5));
+		
 		if (refTable)
 			return refTable[lookupStr];
+	},
+	
+	// OP_ATTR_ASSIGN
+	'15' : function(node) {
+		// Look up potentially recursive variable name
+		var varName = linker.linkRecursively(node.children[1]);
+		
+		// Figure out target object
+		var targetClass = null;
+		var targetObj = -1;
+		var target = execute( node.children[0] );
+		if (target == 'this') {
+			targetClass = pstate.curClass;
+			targetObj = pstate.curObj;
+		} else {
+			if (target.type != T_OBJECT) {
+				throw invocationTargetInvalid(target.type);
+			}
+			
+			targetClass = pstate.objList[target.value.objListEntry];
+			targetObj = target.value.objListEntry;
+		}
+		
+		if (targetObj == -1)
+			throw fetchTargetInvalid();
+		
+		// Check if the variable we are trying to assign to already contains an object;
+		// decrement the reference count for the object if this is the case.
+		var oldVal = null;
+		try {
+			oldVal = linker.getValueFromObj(targetObj, varName);
+		} catch (exception) {
+			if (exception!=varNotFound(varName))
+				throw exception;
+			else
+				oldVal = false;
+		}
+		
+		try {
+			var val = execute( node.children[2] );
+		} catch(exception) {
+			// If we get an undefined variable error, and the undefined variable is the variable
+			// we are currently defining, initialize the current variable to 0, and try assigning again.
+			if (exception == varNotFound(varName)) {
+				execute( createNode( NODE_OP, OP_ASSIGN, varName, createValue( T_INT, 0 ) ) );
+				val = execute( node.children[1] );
+			} else {
+				throw exception;
+			}
+		}
+		
+		// If we are assigning an object, increment its reference count.
+		if (oldVal.value != val.value) {
+			if (oldVal && oldVal.type == T_OBJECT)
+				classLinker.decrementObjectRef(linker.getValue(varName));
+			
+			if (val.type == T_OBJECT && oldVal.value != val.value)
+				val.value.references++;
+		}
+		
+		linker.assignVar( node.children[0], val );
+		
+		return val;
 	},
 	
 	// OP_EQU
@@ -1455,7 +1554,6 @@ function execute( node ) {
 	"NEW"							NewToken
 	"CLASS"							ClassToken
 	"PUBLIC"						PublicToken
-	"VAR"							VarToken
 	"PRIVATE"						PrivateToken
 	"PROTECTED"						ProtectedToken
 	'{'
@@ -1489,11 +1587,8 @@ function execute( node ) {
 	'function [a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
 									FunctionName
 										[* %match = %match.substr(9,%match.length-1); *]
-	'[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*\('
-									FunctionInvoke
-										[* %match = %match.substr(0,%match.length-1); *]
 	'[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
-									ClassName
+									Identifier
 	'((\'[^\']*\')|("[^"]*"))'		String
 										[*
 											%match = %match.substr(1,%match.length-2);
@@ -1523,7 +1618,7 @@ Script: 	ScriptBegin Stmt ScriptEnd
 		;
 		
 ClassDefinition:
-			ClassToken ClassName '{' Member '}'
+			ClassToken Identifier '{' Member '}'
 										[*	
 											pstate.curClass = %2+'::';
 											pstate.classTable[%2] =
@@ -1541,7 +1636,6 @@ Member:		Member AttributeDefinition
 
 AttributeMod:
 			PublicToken					[* %% = MOD_PUBLIC; *]
-		|	VarToken					[* %% = MOD_PUBLIC; *]
 		|	ProtectedToken				[* %% = MOD_PROTECTED; *]
 		|	PrivateToken				[* %% = MOD_PRIVATE; *]
 		;
@@ -1605,6 +1699,8 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
 										[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
 		|	ECHO Expression ';'			[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
 		|	Variable '=' Expression ';'	[* %% = createNode( NODE_OP, OP_ASSIGN, %1, %3 ); *]
+		|	Target '->' AttributeAccess '=' Expression ';'
+										[* %% = createNode( NODE_OP, OP_ATTR_ASSIGN, %1, %3, %5 ); *]
 		|	ClassDefinition
 		|	FunctionDefinition
 		|	Variable ArrayIndices '=' Expression ';'
@@ -1619,13 +1715,13 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
 		|	'//' AssertStmt
 		;
 		
-AssertStmt:	ClassName String
+AssertStmt:	Identifier String
 										[*	
 											if (phypeTestSuite && %1 == "assertEcho") {
 												pstate.assertion = createAssertion( ASS_ECHO, %2 );
 											}
 										*]
-		|	ClassName					[*
+		|	Identifier					[*
 											if (phypeTestSuite && %1 == "assertFail") {
 												pstate.assertion = createAssertion( ASS_FAIL, 0 );
 											}
@@ -1653,22 +1749,46 @@ Return:		RETURN Expression			[* %% = createNode( NODE_OP, OP_RETURN, %2 ); *]
 Target:		Expression
 		;
 
+ExpressionNotFunAccess:
+			BinaryOp
+		|	NewToken FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_OBJ_NEW, %2, %3 ); *]
+		|	Target '->' MemberAccess	[* %3.children[0] = %1; %% = %3; *]
+		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
+		|	'(' Expression ')'			[* %% = %2; *]
+		;
+		
 Expression:	BinaryOp
 		|	NewToken FunctionInvoke ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_OBJ_NEW, %2, %3 ); *]
-		|	Target '->' FunctionInvoke ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, %1, %3, %4 ); *]
-		|	Target '->' Expression '(' ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, %1, %3, %5 ); *]
-		|	FunctionInvoke ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
-		|	Expression '(' ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_FCALL, %1, %3 ); *]
-		|	Target '->' Expression		[* %% = createNode( NODE_OP, OP_OBJ_FETCH, %2, %3 ); *]
+		|	Target '->' MemberAccess	[* %3.children[0] = %1; %% = %3; *]
+		|	FunctionAccess
 		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
 		|	'(' Expression ')'			[* %% = %2; *]
 		;
 
+FunctionInvoke:
+			Identifier '('				[* %% = %1; *]
+		|	Expression '('				[* %% = %1; *]
+		;
+
+MemberAccess:
+			FunctionAccess
+		|	AttributeAccess
+		;
+		
+AttributeAccess:
+			Identifier					[* %% = createNode( NODE_OP, OP_OBJ_FETCH, null, %1 ); *]
+		|	ExpressionNotFunAccess		[* %% = createNode( NODE_OP, OP_OBJ_FETCH, null, %1 ); *]
+		;
+
+FunctionAccess:
+			FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, null, %1, %2 ); *]
+		|	Expression '(' ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, null, %1, %3 ); *]
+		;
+		
 ActualParameterList:
 			ActualParameterList ',' Expression
 										[* %% = createNode( NODE_OP, OP_PASS_PARAM, %1, %3 ); *]
@@ -1727,7 +1847,7 @@ if (!phypeIn || phypeIn == 'undefined') {
 			"<? " +
 			"class test {" +
 			"	private $var = 'foo';" +
-			"	function hello() { echo 'hello world!'; }" +
+			"	function hello() { echo $this->var; }" +
 			"} " +
 			"$a = new test();" +
 			"$a->hello();" +
@@ -1831,6 +1951,9 @@ else if (phpScripts) {
 	}
 }
 
+var_log(pstate.symTables);
+var_log(pstate.objList);
+var_log(pstate.objMapping);
 
 ///////////////
 // DEBUGGING //
