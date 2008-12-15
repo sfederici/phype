@@ -611,7 +611,8 @@ var classLinker = {
         // Init object and add it to the list of objects.
         var objListLength = pstate.objList.length;
         var obj = createObject( objListLength, classDef.name );
-        pstate.objList.push( createValue( T_OBJECT, obj ) );
+        var_log(pstate.objList);
+        pstate.objList[pstate.objList.length] = createValue( T_OBJECT, obj );
         
         // Init variable list
         for (var attr in classDef.attrs) {
@@ -955,11 +956,16 @@ var ops = {
         
         var prevFun = pstate.curFun;
         
+        // If any className,
+        var className = '';
+        if (pstate.curClass && pstate.curClass != '')
+            className = pstate.curClass+'::';
+        
         // Set the name of the function (possibly with class name as prefix)
         if (funName.type == T_CONST)
-            pstate.curFun = pstate.curClass+'::'+funName.value;
+            pstate.curFun = className+funName.value;
         else if (typeof(funName) == 'string')
-            pstate.curFun = pstate.curClass+'::'+funName;
+            pstate.curFun = className+funName;
         else
             throw funNameMustBeString(funName.type);
 
@@ -967,8 +973,13 @@ var ops = {
         if ( node.children[1] )
             execute( node.children[1] );
         
-        // Execute function
         var f = pstate.funTable[pstate.curFun];
+        
+        // If f expects no parameters, make sure params' length attribute is set correctly
+        if (!f.params.length)
+            f.params.length = 0;
+        
+        // Execute function
         if ( f && f.params.length <= pstate.passedParams ) {
             for ( var i=0; i<f.nodes.length; i++ )
                 execute( f.nodes[i] );
@@ -1139,16 +1150,20 @@ var ops = {
         pstate.curClass = className;
         pstate.curObj = obj.objListEntry;
         
+        var_log(realClass);
+        
         // Get and execute constructor
         var constructInvoke = null;
-        // First look for __construct-function (higher precedence than class-named function as
+        // First look for __contruct-function (higher precedence than class-named function as
         // constructor)
         if (realClass['funs']['__construct']) {
-            constructInvoke = createNode( NODE_OP, OP_FCALL, className, '__construct' );
+            constructInvoke = createNode( NODE_OP, OP_OBJ_FCALL, createNode( NODE_VAR, 'this' ),
+                                    className, '__construct' );
         }
         // Then look for class-named function as constructor
-        else if (realClass['funs'][node.children[1]]) {
-            constructInvoke = createNode( NODE_OP, OP_FCALL, className, node.children[1] );
+        else if (realClass['funs'][className]) {
+            constructInvoke = createNode( NODE_OP, OP_OBJ_FCALL, createNode( NODE_VAR, 'this' ),
+                                    className, className );
         }
         
         // Only invoke the constructor if it is defined
@@ -1165,8 +1180,10 @@ var ops = {
     
     // OP_OBJ_FCALL
     '13' : function(node) {
-        if (!node.children[0])
-            execute( createNode(NODE_OP, OP_FCALL, node.children[1], node.children[2]) );
+        var target = execute( node.children[0] );
+        if (!target) {
+            return execute( createNode(NODE_OP, OP_FCALL, node.children[1], node.children[2]) );
+        }
         
         // The function name can be defined by an expression. Execute it.
         if (typeof(node.children[1]) != 'string')
@@ -1177,7 +1194,6 @@ var ops = {
         
         var targetClass = null;
         var targetObj = -1;
-        var target = execute( node.children[0] );
         if (target == 'this') {
             targetClass = pstate.curClass;
             targetObj = pstate.curObj;
@@ -1213,11 +1229,16 @@ var ops = {
             
             // Fetch function
             var f = pstate.classTable[targetClass]['funs'][funName]['member'];
-            
+            var_log(targetClass);
+            var_log(funName);
             // Initialize parameters for the function scope
             if ( node.children[2] )
                 execute( node.children[2] );
             
+            // If f expects no parameters, make sure params' length attribute is set correctly
+            if (!f.params.length)
+                f.params.length = 0;
+        
             // Execute function
             if ( f && f.params.length <= pstate.passedParams ) {
                 for ( var i=0; i<f.nodes.length; i++ )
@@ -3564,13 +3585,13 @@ if (!phypeIn || phypeIn == 'undefined') {
         //    "<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
             //"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {    $r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
             //"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
-            "<? " +
+            "<?" +
             "class test {" +
-            "    private $var = 'foo';" +
-            "    function hello() { echo $this->var; }" +
-            "} " +
-            "$a = new test();" +
-            "$a->hello();" +
+            "    function test() {" +
+            "        echo 'hello world';" +
+            "    }" +
+            "}" +
+            "$foo = new test();" +
             "?>"
         );
     };
@@ -3633,6 +3654,7 @@ else if (phpScripts) {
         var error_la    = new Array();
         
         if (i>0) __parse( preParse(script.code) );
+        resetState();
         
         phypeEcho = '';
         
@@ -3663,7 +3685,6 @@ else if (phpScripts) {
                             ' but no exceptions were raised.<br/>\n<br/>\n');
         }
         pstate.assertion = null;
-        resetState();
     }
     if (phypeDoc && phypeDoc.open) {
         phypeDoc.write('Testing done!');

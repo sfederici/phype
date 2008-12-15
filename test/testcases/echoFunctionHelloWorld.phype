@@ -1,8 +1,8 @@
 <?
-	// assertEcho 'hello world'
-	function helloWorld() {
-		return 'hello world';
-	}
-	
-	echo helloWorld();
+// assertEcho 'hello world'
+function helloWorld() {
+	return 'hello world';
+}
+
+echo helloWorld();
 ?>
