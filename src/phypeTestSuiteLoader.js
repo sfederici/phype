@@ -1,4 +1,4 @@
-var inBrowser = true;
+var fromShell = false;
 
 function SCRIPT(name, code) {
 	this.name = name;
