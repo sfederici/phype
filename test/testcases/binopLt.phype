@@ -1,8 +1,0 @@
-<?
-// assertEcho '01'
-$a = 42;
-$b = 60;
-
-echo ($b<$a);
-echo ($a<$b);
-?>
