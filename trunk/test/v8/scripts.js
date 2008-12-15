@@ -392,13 +392,15 @@ class test {\
 }\
 \
 $i = 0;\
+$varName = 'test';\
 while ($i < 1000) {\
+	$$varName = '';\
 	$varName = 'test'.$i;\
 	$$varName = new test();\
 	$i = $i+1;\
 }\
 \
-echo $test9->hi();\
+echo $test999->hi();\
 ?>");
 phpScripts[phpScripts.length] = new SCRIPT("tripleDimensionalArray.phype", "<?\
 // assertEcho 'hello world'\
