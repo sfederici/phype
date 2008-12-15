@@ -761,6 +761,7 @@ var OP_DIV			= 58;
 var OP_MUL			= 59;
 var OP_NEG			= 60;
 var OP_CONCAT		= 61;
+var OP_BOOL_NEG		= 62;
 
 // Moderation types
 var MOD_PUBLIC		= 0;
@@ -866,13 +867,10 @@ function varNotFound(varName) {
 var ops = {
 	// OP_NONE
 	'-1' : function(node) {
-		var ret = null;
 		if( node.children[0] )
-			ret = execute( node.children[0] );
+			execute( node.children[0] );
 		if( node.children[1] )
-			ret = ret+execute( node.children[1] );
-
-		return ret;
+			execute( node.children[1] );
 	},
 	
 	// OP_ASSIGN
@@ -935,7 +933,8 @@ var ops = {
 	
 	// OP_IF_ELSE
 	'2' : function(node) {
-		if( execute( node.children[0] ) )
+		var condChild = execute(node.children[0]);
+		if(condChild.value)
 			return execute( node.children[1] );
 		else
 			return execute( node.children[2] );
@@ -943,7 +942,6 @@ var ops = {
 	
 	// OP_WHILE_DO
 	'3' : function(node) {
-		var ret = false;
 		var tmp = execute( node.children[0] );
 		while( tmp.value ) {
 			execute( node.children[1] );
@@ -953,7 +951,6 @@ var ops = {
 
 	// OP_DO_WHILE
 	'4' : function(node) {
-		var ret = 0;
 		do {
 			execute( node.children[0] );
 		} while( execute( node.children[1] ) );
@@ -1385,9 +1382,9 @@ var ops = {
 		var rightChild = execute(node.children[1]);
 		var resultNode;
 		if (leftChild.value == rightChild.value)
-			resultNode = createValue(T_CONST, 1);
+			resultNode = createValue(T_INT, 1);
 		else
-			resultNode = createValue(T_CONST, 0);
+			resultNode = createValue(T_INT, 0);
 		return resultNode;
 	},
 	
@@ -1397,9 +1394,9 @@ var ops = {
 		var rightChild = execute(node.children[1]);
 		var resultNode;
 		if (leftChild.value != rightChild.value)
-			resultNode = createValue(T_CONST, 1);
+			resultNode = createValue(T_INT, 1);
 		else
-			resultNode = createValue(T_CONST, 0);
+			resultNode = createValue(T_INT, 0);
 		return resultNode;
 	},
 	
@@ -1409,9 +1406,9 @@ var ops = {
 		var rightChild = execute(node.children[1]);
 		var resultNode;
 		if (parseInt(leftChild.value) > parseInt(rightChild.value))
-			resultNode = createValue(T_CONST, 1);
+			resultNode = createValue(T_INT, 1);
 		else
-			resultNode = createValue(T_CONST, 0);
+			resultNode = createValue(T_INT, 0);
 		return resultNode;
 		},
 	
@@ -1421,9 +1418,9 @@ var ops = {
 		var rightChild = execute(node.children[1]);
 		var resultNode;
 		if (linker.getNumberFromNode(leftChild) < linker.getNumberFromNode(rightChild))
-			resultNode = createValue(T_CONST, 1);
+			resultNode = createValue(T_INT, 1);
 		else
-			resultNode = createValue(T_CONST, 0);
+			resultNode = createValue(T_INT, 0);
 
 		return resultNode;
 	},
@@ -1434,9 +1431,9 @@ var ops = {
 		var rightChild = execute(node.children[1]);
 		var resultNode;
 		if (linker.getNumberFromNode(leftChild) >= linker.getNumberFromNode(rightChild))
-			resultNode = createValue(T_CONST, 1);
+			resultNode = createValue(T_INT, 1);
 		else
-			resultNode = createValue(T_CONST, 0);
+			resultNode = createValue(T_INT, 0);
 		return resultNode;
 	},
 	
@@ -1446,9 +1443,9 @@ var ops = {
 		var rightChild = execute(node.children[1]);
 		var resultNode;
 		if (linker.getNumberFromNode(leftChild) <= linker.getNumberFromNode(rightChild))
-			resultNode = createValue(T_CONST, 1);
+			resultNode = createValue(T_INT, 1);
 		else
-			resultNode = createValue(T_CONST, 0);
+			resultNode = createValue(T_INT, 0);
 		return resultNode;
 	},
 	
@@ -1534,6 +1531,13 @@ var ops = {
 		var rightChild = execute( node.children[1] );
 
 		return createValue( T_CONST, leftChild.value+rightChild.value );
+	},
+	
+	// OP_BOOL_NEG
+	'62' : function(node) {
+		var val = execute( node.children[0] );
+		if (val.value) return createNode( NODE_INT, 0 );
+		else return createNode( NODE_INT, 1 );
 	}
 }
 
@@ -1601,6 +1605,7 @@ function execute( node ) {
 	','
 	'\.'
 	'='
+	'!'
 	'=='
 	'!='
 	'<!'
@@ -1624,15 +1629,22 @@ function execute( node ) {
 	'function [a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
 									FunctionName
 										[* %match = %match.substr(9,%match.length-1); *]
-	'[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
-									Identifier
 	'((\'[^\']*\')|("[^"]*"))'		String
 										[*
 											%match = %match.substr(1,%match.length-2);
 											%match = %match.replace( /\\'/g, "'" );
 										*]
 	'[0-9]+'						Integer
+	'true|false'					Boolean
+										[*
+											if (%match == 'true')
+												%match = 1;
+											else 
+												%match = 0;
+										*]
 	'[0-9]+\.[0-9]*|[0-9]*\.[0-9]+'	Float
+	'[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
+									Identifier
 	'<\?'							ScriptBegin
 	'\?>(([^<\?])|<[^\?])*'			ScriptEnd
 	'\?>(([^<\?])|<[^\?])*<\?'		InternalNonScript
@@ -1725,22 +1737,25 @@ AttributeDefinition:
 										*]
 		;
 
-Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
-		|	Return ';'
+SingleStmt:	Return ';'
 		|	Expression ';'
-		|	IF Expression Stmt 			[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
-		|	IF Expression Stmt ELSE Stmt	
+		|	IF Expression SingleStmt	[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
+		|	IF Expression SingleStmt ELSE SingleStmt	
 										[* %% = createNode( NODE_OP, OP_IF_ELSE, %2, %3, %5 ); *]
-		|	WHILE Expression Stmt 	[* %% = createNode( NODE_OP, OP_WHILE_DO, %2, %3 ); *]
-		|	DO Stmt WHILE Expression ';'	
+		|	WHILE Expression SingleStmt	[* %% = createNode( NODE_OP, OP_WHILE_DO, %2, %3 ); *]
+		|	DO SingleStmt WHILE Expression ';'
 										[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
 		|	ECHO Expression ';'			[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
 		|	AssignmentStmt ';'
-		|	ClassDefinition
-		|	FunctionDefinition
 		|	Variable ArrayIndices '=' Expression ';'
 										[* %% = createNode( NODE_OP, OP_ASSIGN_ARR, %1, %2, %4 ); *]
 		|	'{' Stmt '}'				[* %% = %2; *]
+		;
+		
+Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
+		|	SingleStmt
+		|	ClassDefinition
+		|	FunctionDefinition
 		|	InternalNonScript			[* 
 											if (%1.length > 4) {
 												var strNode = createNode( NODE_CONST, %1.substring(2,%1.length-2) );
@@ -1860,14 +1875,16 @@ MulDivExp:	MulDivExp '*' UnaryOp		[* %% = createNode( NODE_OP, OP_MUL, %1, %3 );
 		;
 				
 UnaryOp:	'-' Value					[* %% = createNode( NODE_OP, OP_NEG, %2 ); *]
+		|	'!' Expression				[* %% = createNode( NODE_OP, OP_BOOL_NEG, %2 ); *]
 		|	Value
 		;
 
 Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
-		|	'(' Expression ')'			[* %% = %2; *]
 		|	String						[* %% = createNode( NODE_CONST, %1 ); *]
 		|	Integer						[* %% = createNode( NODE_INT, %1 ); *]
+		|	Boolean						[* %% = createNode( NODE_INT, %1 ); *]
 		|	Float						[* %% = createNode( NODE_FLOAT, %1 ); *]
+		|	'(' Expression ')'			[* %% = %2; *]
 		;
 
 [*
@@ -1888,7 +1905,12 @@ if (!phypeIn || phypeIn == 'undefined') {
 				//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
 				//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
 				"<?" +
-				"echo ($i = 0);" +
+				"$i = 0;" +
+				" echo ($i < 10);"+
+				"while ($i < 10) {" +
+				"	echo $i;" +
+				"	$i = $i+1;" +
+				"}" +
 				"?>"
 			);
 	};
