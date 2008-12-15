@@ -360,7 +360,7 @@ var linker = {
 				ret = clone(refTable[lookupStr]);
 			return ret;
 		}
-
+		
 		throw varNotFound(varName);
 	},
 	
@@ -376,8 +376,8 @@ var linker = {
 		if (!scope)
 			scope = pstate.curFun;
 		
-		var cleanVarName = varName.match(/[^\$]/);
-		
+		var cleanVarName = varName.match(/[^\$]*/);
+
 		var result = '';
 		if (typeof(pstate.symTables[scope])=='object' && typeof(pstate.symTables[scope][cleanVarName])=='string') {
 			var prefix = pstate.symTables[scope][cleanVarName].substring(0,5);
@@ -394,7 +394,7 @@ var linker = {
 			if (pstate.arrTable[lookupStr] && pstate.arrTable[lookupStr]["value"][key.value]) {
 				result = pstate.arrTable[lookupStr]["value"][key.value];
 			}
-		} else if (typeof(pstate.symTables[cons.global])=='string') {
+		} else if (typeof(pstate.symTables[cons.global][cleanVarName])=='string') {
 			var lookupStr = pstate.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
@@ -417,7 +417,7 @@ var linker = {
 		if (!scope)
 			scope = pstate.curFun;
 		
-		var cleanVarName = varName.match(/[^\$]/);
+		var cleanVarName = varName.match(/[^\$]*/);
 		
 		var result = '';
 		if (typeof(pstate.symTables[scope])=='object' && typeof(pstate.symTables[scope][cleanVarName])=='string') {
@@ -440,7 +440,7 @@ var linker = {
 			// Look up the value of the variable
 			keyRef = 'result = '+keyRef+';';
 			eval(keyRef);
-		} else if (typeof(pstate.symTables[cons.global])=='string') {
+		} else if (typeof(pstate.symTables[cons.global][cleanVarName])=='string') {
 			var lookupStr = pstate.symTables[cons.global][cleanVarName];
 			lookupStr = lookupStr.substr(5, lookupStr.length);
 			
@@ -1866,12 +1866,9 @@ if (!phypeIn || phypeIn == 'undefined') {
 			//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
 			//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
 			"<?" +
-			"class test {" +
-			"	function test() {" +
-			"		echo 'hello world';" +
-			"	}" +
-			"}" +
-			"$foo = new test();" +
+			"$arr['foo'] = 'hello';" +
+			"$arr[1] = 'world';" +
+			"echo $arr['foo'].' '.$arr[1];" +
 			"?>"
 		);
 	};
