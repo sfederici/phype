@@ -1861,22 +1861,32 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 //////////////////////
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
-		return prompt( "Please enter a PHP-script to be executed:",
-		//	"<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
-			//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
-			//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
-			"<?" +
-			"$arr['foo'] = 'hello';" +
-			"$arr[1] = 'world';" +
-			"echo $arr['foo'].' '.$arr[1];" +
-			"?>"
-		);
+		// Running from V8 or another shell JS-app
+		if (typeof(alert) == typeof(undefined)) {
+			return '';
+		}
+		// Running from browser
+		else
+			return prompt( "Please enter a PHP-script to be executed:",
+			//	"<? $a[1] = 'foo'; $foo = 'bar'; echo $a[1].$foo; ?>"
+				//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
+				//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
+				"<?" +
+				"$arr['foo'] = 'hello';" +
+				"$arr[1] = 'world';" +
+				"echo $arr['foo'].' '.$arr[1];" +
+				"?>"
+			);
 	};
 }
 
 // Set phypeOut if it is not set.
 if (!phypeOut || phypeOut == 'undefined') {
-	var phypeOut = alert;
+	// Running from V8 or another shell JS-app
+	if (typeof(alert) == typeof(undefined))
+		var phypeOut = print;
+	else // Running from browser
+		var phypeOut = alert;
 }
 
 /**
@@ -1898,6 +1908,17 @@ function preParse(str) {
 	return res
 }
 
+function interpret(str) {
+	var error_cnt 	= 0;
+	var error_off	= new Array();
+	var error_la	= new Array();
+	
+	if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 ) {
+		for(var i=0; i<error_cnt; i++)
+			phypeOut( "Parse error near >" 
+				+ str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"<br/>\n" );
+	}
+}
 
 /////////////
 // PARSING //
@@ -1907,15 +1928,7 @@ function preParse(str) {
 if (!phypeTestSuite) {
 	var str = phypeIn();
 
-	var error_cnt 	= 0;
-	var error_off	= new Array();
-	var error_la	= new Array();
-	
-	if( ( error_cnt = __parse( preParse(str), error_off, error_la ) ) > 0 ) {
-		for(var i=0; i<error_cnt; i++)
-			alert( "Parse error near >" 
-				+ str.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" );
-	}
+	interpret(str);
 	
 	if (phypeDoc && phypeDoc.open) {
 		phypeDoc.close();
