@@ -7,6 +7,8 @@
 var phypeTestSuite;
 // Contains scripts to execute
 var phpScripts;
+var phypeDoc;
+var fromShell;
 
 // Constants used for keeping track of states and variables.
 var cons = {
@@ -719,36 +721,37 @@ var NODE_INT		= 3;
 var NODE_FLOAT		= 4;
 
 // Op types
-var OP_NONE			= -1;
-var OP_ASSIGN		= 0;
-var OP_IF			= 1;
-var OP_IF_ELSE		= 2;
-var OP_WHILE_DO		= 3;
-var OP_DO_WHILE		= 4;
-var OP_FCALL		= 5;
-var OP_PASS_PARAM	= 6;
-var OP_RETURN		= 7;
-var OP_ECHO			= 8;
-var OP_ASSIGN_ARR	= 9;
-var OP_FETCH_ARR	= 10;
-var OP_ARR_KEYS_R	= 11;
-var OP_OBJ_NEW		= 12;
-var OP_OBJ_FCALL	= 13;
-var OP_OBJ_FETCH	= 14;
-var OP_ATTR_ASSIGN	= 15;
-var OP_EQU			= 50;
-var OP_NEQ			= 51;
-var OP_GRT			= 52;
-var OP_LOT			= 53;
-var OP_GRE			= 54;
-var OP_LOE			= 55;
-var OP_ADD			= 56;
-var OP_SUB			= 57;
-var OP_DIV			= 58;
-var OP_MUL			= 59;
-var OP_NEG			= 60;
-var OP_CONCAT		= 61;
-var OP_BOOL_NEG		= 62;
+var OP_NONE			= 0;
+var OP_ASSIGN		= 1;
+var OP_IF			= 2;
+var OP_IF_ELSE		= 3;
+var OP_WHILE_DO		= 4;
+var OP_DO_WHILE		= 5;
+var OP_FCALL		= 6;
+var OP_PASS_PARAM	= 7;
+var OP_RETURN		= 8;
+var OP_ECHO			= 9;
+var OP_ASSIGN_ARR	= 10;
+var OP_FETCH_ARR	= 11;
+var OP_ARR_KEYS_R	= 12;
+var OP_OBJ_NEW		= 13;
+var OP_OBJ_FCALL	= 14;
+var OP_OBJ_FETCH	= 15;
+var OP_ATTR_ASSIGN	= 16;
+
+var OP_EQU			= 30;
+var OP_NEQ			= 31;
+var OP_GRT			= 32;
+var OP_LOT			= 33;
+var OP_GRE			= 34;
+var OP_LOE			= 35;
+var OP_ADD			= 36;
+var OP_SUB			= 37;
+var OP_DIV			= 38;
+var OP_MUL			= 39;
+var OP_NEG			= 40;
+var OP_CONCAT		= 41;
+var OP_BOOL_NEG		= 42;
 
 // Moderation types
 var MOD_PUBLIC		= 0;
@@ -851,132 +854,388 @@ function varNotFound(varName) {
 ///////////////
 // OPERATORS //
 ///////////////
-var ops = {
-	// OP_NONE
-	'-1' : function(node) {
-		if( node.children[0] )
-			execute( node.children[0] );
-		if( node.children[1] )
-			execute( node.children[1] );
-	},
-	
-	// OP_ASSIGN
-	'0' : function(node) {
-		// $this cannot be redeclared.
-		if (varName == 'this')
-			throw thisRedeclare();
-			
-		// Look up potentially recursive variable name
-		var varName = linker.linkRecursively(node.children[0]);
+var ops = [];
+// OP_NONE
+ops[OP_NONE] = function(node) {
+	if( node.children[0] )
+		execute( node.children[0] );
+	if( node.children[1] )
+		execute( node.children[1] );
+};
 
-		// Check if the variable we are trying to assign to already contains an object;
-		// decrement the reference count for the object if this is the case.
-		var oldVal = null;
-		try {
-			oldVal = linker.getValue(varName);
-		} catch (exception) {
-			if (exception!=varNotFound(varName))
-				throw exception;
-			else
-				oldVal = false;
-		}
+// OP_ASSIGN
+ops[OP_ASSIGN] = function(node) {
+	// $this cannot be redeclared.
+	if (varName == 'this')
+		throw thisRedeclare();
 		
-		if (oldVal && oldVal.type == T_OBJECT)
-			classLinker.decrementObjectRef(linker.getValue(varName).value);
-		
-		try {
-			var val = execute( node.children[1] );
-		} catch(exception) {
-			// If we get an undefined variable error, and the undefined variable is the variable
-			// we are currently defining, initialize the current variable to 0, and try assigning again.
-			if (exception == varNotFound(varName)) {
-				execute( createNode( NODE_OP, OP_ASSIGN, varName, createValue( T_INT, 0 ) ) );
-				val = execute( node.children[1] );
-			} else {
-				throw exception;
-			}
-		}
-		
-		// If we are assigning an object, increment its reference count.
-		if (oldVal.value != val.value) {
-			if (oldVal && oldVal.type == T_OBJECT)
-				classLinker.decrementObjectRef(linker.getValue(varName));
-			
-			if (val.type == T_OBJECT && oldVal.value != val.value)
-				val.value.references++;
-		}
-		
-		linker.assignVar( varName, val );
-		
-		return val;
-	},
-	
-	// OP_IF
-	'1' : function(node) {
-		var condChild = execute(node.children[0]);
-		if(condChild.value)
-			return execute(node.children[1]);
-	},
-	
-	// OP_IF_ELSE
-	'2' : function(node) {
-		var condChild = execute(node.children[0]);
-		if(condChild.value)
-			return execute( node.children[1] );
+	// Look up potentially recursive variable name
+	var varName = linker.linkRecursively(node.children[0]);
+
+	// Check if the variable we are trying to assign to already contains an object;
+	// decrement the reference count for the object if this is the case.
+	var oldVal = null;
+	try {
+		oldVal = linker.getValue(varName);
+	} catch (exception) {
+		if (exception!=varNotFound(varName))
+			throw exception;
 		else
-			return execute( node.children[2] );
-	},
+			oldVal = false;
+	}
 	
-	// OP_WHILE_DO
-	'3' : function(node) {
-		var tmp = execute( node.children[0] );
-		while( tmp.value ) {
-			execute( node.children[1] );
-			tmp = execute( node.children[0] );
+	if (oldVal && oldVal.type == T_OBJECT)
+		classLinker.decrementObjectRef(linker.getValue(varName).value);
+	
+	try {
+		var val = execute( node.children[1] );
+	} catch(exception) {
+		// If we get an undefined variable error, and the undefined variable is the variable
+		// we are currently defining, initialize the current variable to 0, and try assigning again.
+		if (exception == varNotFound(varName)) {
+			execute( createNode( NODE_OP, OP_ASSIGN, varName, createValue( T_INT, 0 ) ) );
+			val = execute( node.children[1] );
+		} else {
+			throw exception;
 		}
-	},
-
-	// OP_DO_WHILE
-	'4' : function(node) {
-		do {
-			execute( node.children[0] );
-		} while( execute( node.children[1] ) );
-	},
+	}
 	
-	// OP_FCALL
-	'5' : function (node) {
+	// If we are assigning an object, increment its reference count.
+	if (oldVal.value != val.value) {
+		if (oldVal && oldVal.type == T_OBJECT)
+			classLinker.decrementObjectRef(linker.getValue(varName));
+		
+		if (val.type == T_OBJECT && oldVal.value != val.value)
+			val.value.references++;
+	}
+	
+	linker.assignVar( varName, val );
+	
+	return val;
+};
+
+// OP_IF
+ops[OP_IF] = function(node) {
+	var condChild = execute(node.children[0]);
+	if(condChild.value)
+		return execute(node.children[1]);
+};
+
+// OP_IF_ELSE
+ops[OP_IF_ELSE] = function(node) {
+	var condChild = execute(node.children[0]);
+	if(condChild.value)
+		return execute( node.children[1] );
+	else
+		return execute( node.children[2] );
+};
+
+// OP_WHILE_DO
+ops[OP_WHILE_DO] = function(node) {
+	var tmp = execute( node.children[0] );
+	while( tmp.value ) {
+		execute( node.children[1] );
+		tmp = execute( node.children[0] );
+	}
+};
+
+// OP_DO_WHILE
+ops[OP_DO_WHILE] = function(node) {
+	do {
+		execute( node.children[0] );
+	} while( execute( node.children[1] ) );
+};
+
+// OP_FCALL
+ops[OP_FCALL] = function (node) {
+	// State preservation
+	var prevPassedParams = pstate.passedParams;
+	pstate.passedParams = 0;
+	
+	// Check if function name is recursively defined
+	var funName = linker.linkRecursively(node.children[0]);
+	
+	var prevFun = pstate.curFun;
+	
+	// If any className,
+	var className = '';
+	if (pstate.curClass && pstate.curClass != '')
+		className = pstate.curClass+'::';
+	
+	// Set the name of the function (possibly with class name as prefix)
+	if (funName.type == T_CONST)
+		pstate.curFun = className+funName.value;
+	else if (typeof(funName) == 'string') 
+		pstate.curFun = className+funName;
+	else 
+		throw funNameMustBeString(funName.type);
+
+	// Initialize parameters for the function scope
+	if ( node.children[1] )
+		execute( node.children[1] );
+	
+	var f = pstate.funTable[pstate.curFun];
+	
+	// If f expects no parameters, make sure params' length attribute is set correctly
+	if (!f.params.length)
+		f.params.length = 0;
+	
+	// Execute function
+	if ( f && f.params.length <= pstate.passedParams ) {
+		for ( var i=0; i<f.nodes.length; i++ )
+			execute( f.nodes[i] );
+	} else {
+		if (!f) {
+			throw funNotFound(funName);
+		} else if (!(f.params.length <= pstate.passedParams))
+			throw funInvalidArgCount(f.params.length);
+	}
+	
+	// Clear parameters for the function scope
+	for ( var i=0; i<f.params.length; i++ )
+		linker.unlinkVar( f.params[i] );
+	
+	// State roll-back
+	pstate.passedParams = prevPassedParams;
+	pstate.curFun = prevFun;
+	var ret = pstate['return'];
+	pstate['return'] = 0;
+	
+	// Return the value saved in .return in our valTable.
+	return ret;
+};
+
+// OP_PASS_PARAM
+ops[OP_PASS_PARAM] = function(node) {
+	// Initialize parameter name
+	var f = pstate.funTable[pstate.curFun];
+
+	if (!f)
+		throw funNotFound();
+		
+	// Link parameter name with passed value
+	if ( node.children[0] ) {
+		if ( node.children[0].value != OP_PASS_PARAM ) {
+			// Initialize parameter name
+			var paramName = '';
+			if ( pstate.passedParams < f.params.length )
+				paramName = f.params[pstate.passedParams].value;
+			else
+				paramName = '.arg'+pstate.passedParams;
+
+			// Link
+			linker.assignVar( paramName, execute( node.children[0] ) );
+			pstate.passedParams++;
+		} else {
+			execute( node.children[0] );
+		}
+	}
+	
+	if ( node.children[1] ) {
+		// Initialize parameter name
+		var paramName = '';
+		if ( pstate.passedParams < f.params.length )
+			paramName = f.params[pstate.passedParams].value;
+		else
+			paramName = '.arg'+pstate.passedParams;
+		
+		// Link
+		linker.assignVar( paramName, execute( node.children[1] ) );
+		pstate.passedParams++;
+	}
+};
+
+// OP_RETURN
+ops[OP_RETURN] = function(node) {
+	if (node.children[0])
+		pstate['return'] = execute( node.children[0] );
+	
+	pstate.term = true;
+};
+
+// OP_ECHO
+ops[OP_ECHO] = function(node) {
+	var val = execute( node.children[0] );
+	
+	if (typeof(val) != 'string') {
+		switch (val.type) {
+			case T_INT:
+			case T_FLOAT:
+			case T_CONST:
+				phypeOut( val.value );
+				break;
+			case T_ARRAY:
+				phypeOut( 'Array' );
+				break;
+			case T_OBJECT:
+				phypeOut( 'Object' );
+				break;
+		}
+	} else {
+		phypeOut( val );
+	}
+};
+
+// OP_ASSIGN_ARR
+ops[OP_ASSIGN_ARR] = function(node) {
+	var varName = node.children[0];
+	var keys = execute( node.children[1] );
+	var value = execute( node.children[2] );
+	
+	// If keys is an (javascript) array, assign it as a multi-dimensional array.
+	if (typeof(keys) == 'object' && keys.length && keys.length != 'undefined')
+		linker.assignArrMulti( varName, keys, value );
+	// Otherwise, assign it ordinarily.
+	else
+		linker.assignArr( varName, keys, value );
+	
+	return value;
+};
+
+// OP_FETCH_ARR
+ops[OP_FETCH_ARR] = function(node) {
+	var varName = node.children[0];
+	var keys = execute( node.children[1] );
+	
+	var value = '';
+	// If keys is a JS array, fetch the value as a multi-dimensional PHP array.
+	if (typeof(keys) == 'object' && keys.length && keys.length != 'undefined')
+		value = linker.getArrValueMulti(varName, keys);
+	// Otherwise, fetch it ordinarily.
+	else {
+		value = linker.getArrValue(varName, keys);
+	}
+
+	return value;
+};
+
+// OP_ARR_KEYS_R
+ops[OP_ARR_KEYS_R] = function(node) {
+	var arrKeys = new Array();
+	
+	if ( node.children[0] ) {
+		// If the first child contains recursive array keys, fetch the the recursively defined array keys,
+		// and join these with the existing array keys.
+		if ( node.children[0].value == OP_ARR_KEYS_R ) {
+			arrKeys.join( execute( node.children[0] ) );
+		}
+		// Otherwise, insert the array key at the end of our list of array.
+		else {
+			arrKeys.push( execute( node.children[0] ) );
+		}
+	}
+	
+	// Add the last array key (if it exists) to the list of array keys.
+	if ( node.children[1] ) {
+		arrKeys.push( execute( node.children[1] ) );
+	}
+	
+	return arrKeys;
+};
+
+// OP_OBJ_NEW
+ops[OP_OBJ_NEW] = function(node) {
+	// Lookup potentially recursively defined class name
+	var className = linker.linkRecursively(node.children[0]);
+	
+	// Look up class in class table
+	var realClass = pstate.classTable[node.children[0]];
+	if (!realClass || realClass == 'undefined') {
+		throw classDefNotFound(node.children[0]);
+	}
+	
+	// Instantiate attributes
+	var obj = classLinker.createObjectFromClass(realClass);
+	
+	// Set state
+	pstate.curClass = className;
+	pstate.curObj = obj.objListEntry;
+	
+	// Get and execute constructor
+	var constructInvoke = null;
+	// First look for __contruct-function (higher precedence than class-named function as
+	// constructor)
+	if (realClass['funs']['__construct']) {
+		constructInvoke = createNode( NODE_OP, OP_OBJ_FCALL, createNode( NODE_VAR, 'this' ),
+								className, '__construct' );
+	}
+	// Then look for class-named function as constructor
+	else if (realClass['funs'][className]) {
+		constructInvoke = createNode( NODE_OP, OP_OBJ_FCALL, createNode( NODE_VAR, 'this' ),
+								className, className );
+	}
+	
+	// Only invoke the constructor if it is defined
+	if (constructInvoke)
+		execute( constructInvoke );
+	
+	//State rollback
+	pstate.curClass = '';
+	pstate.curObj = -1;
+	
+	// Return the instantiated object
+	return createValue( T_OBJECT, obj );
+};
+
+// OP_OBJ_FCALL
+ops[OP_OBJ_FCALL] = function(node) {
+	var target = execute( node.children[0] );
+	if (!target) {
+		return execute( createNode(NODE_OP, OP_FCALL, node.children[1], node.children[2]) );
+	}
+	
+	// The function name can be defined by an expression. Execute it.
+	if (typeof(node.children[1]) != 'string')
+		node.children[1] = execute(node.children[1]);
+	
+	// Check if function name is recursively defined
+	var funName = linker.linkRecursively(node.children[1]);
+	
+	var targetClass = null;
+	var targetObj = -1;
+	if (target == 'this') {
+		targetClass = pstate.curClass;
+		targetObj = pstate.curObj;
+	} else {
+		if (target.type != T_OBJECT) {
+			throw invocationTargetInvalid(target.type);
+		}
+		
+		targetClass = pstate.objList[target.value.objListEntry].value.classDef;
+		targetObj = target.value.objListEntry;
+	}
+	
+	// Invoke function
+	{
 		// State preservation
 		var prevPassedParams = pstate.passedParams;
 		pstate.passedParams = 0;
 		
 		// Check if function name is recursively defined
-		var funName = linker.linkRecursively(node.children[0]);
-		
 		var prevFun = pstate.curFun;
+		var prevClass = pstate.curClass;
+		var prevObj = pstate.curObj;
 		
-		// If any className,
-		var className = '';
-		if (pstate.curClass && pstate.curClass != '')
-			className = pstate.curClass+'::';
-		
-		// Set the name of the function (possibly with class name as prefix)
-		if (funName.type == T_CONST)
-			pstate.curFun = className+funName.value;
-		else if (typeof(funName) == 'string') 
-			pstate.curFun = className+funName;
-		else 
-			throw funNameMustBeString(funName.type);
+		// Set executing function and class
+		pstate.curFun = pstate.curClass+'::'+funName;
+		pstate.curClass = targetClass;
+		pstate.curObj = targetObj;
 
-		// Initialize parameters for the function scope
-		if ( node.children[1] )
-			execute( node.children[1] );
+		// Check visibility
+		if (!classLinker.checkVisibility(pstate.curClass, targetClass, funName)) {
+			throw memberNotVisible(funName);
+		}
 		
-		var f = pstate.funTable[pstate.curFun];
+		// Fetch function
+		var f = pstate.classTable[targetClass]['funs'][funName]['member'];
+		// Initialize parameters for the function scope
+		if ( node.children[2] )
+			execute( node.children[2] );
 		
 		// If f expects no parameters, make sure params' length attribute is set correctly
 		if (!f.params.length)
 			f.params.length = 0;
-		
+	
 		// Execute function
 		if ( f && f.params.length <= pstate.passedParams ) {
 			for ( var i=0; i<f.nodes.length; i++ )
@@ -995,538 +1254,281 @@ var ops = {
 		// State roll-back
 		pstate.passedParams = prevPassedParams;
 		pstate.curFun = prevFun;
+		pstate.curClass = prevClass;
+		pstate.curObj = prevObj;
 		var ret = pstate['return'];
 		pstate['return'] = 0;
 		
 		// Return the value saved in .return in our valTable.
 		return ret;
-	},
-
-	// OP_PASS_PARAM
-	'6' : function(node) {
-		// Initialize parameter name
-		var f = pstate.funTable[pstate.curFun];
-
-		if (!f)
-			throw funNotFound();
-			
-		// Link parameter name with passed value
-		if ( node.children[0] ) {
-			if ( node.children[0].value != OP_PASS_PARAM ) {
-				// Initialize parameter name
-				var paramName = '';
-				if ( pstate.passedParams < f.params.length )
-					paramName = f.params[pstate.passedParams].value;
-				else
-					paramName = '.arg'+pstate.passedParams;
-
-				// Link
-				linker.assignVar( paramName, execute( node.children[0] ) );
-				pstate.passedParams++;
-			} else {
-				execute( node.children[0] );
-			}
-		}
-		
-		if ( node.children[1] ) {
-			// Initialize parameter name
-			var paramName = '';
-			if ( pstate.passedParams < f.params.length )
-				paramName = f.params[pstate.passedParams].value;
-			else
-				paramName = '.arg'+pstate.passedParams;
-			
-			// Link
-			linker.assignVar( paramName, execute( node.children[1] ) );
-			pstate.passedParams++;
-		}
-	},
-
-	// OP_RETURN
-	'7' : function(node) {
-		if (node.children[0])
-			pstate['return'] = execute( node.children[0] );
-		
-		pstate.term = true;
-	},
-
-	// OP_ECHO
-	'8' : function(node) {
-		var val = execute( node.children[0] );
-		
-		if (typeof(val) != 'string') {
-			switch (val.type) {
-				case T_INT:
-				case T_FLOAT:
-				case T_CONST:
-					phypeOut( val.value );
-					break;
-				case T_ARRAY:
-					phypeOut( 'Array' );
-					break;
-				case T_OBJECT:
-					phypeOut( 'Object' );
-					break;
-			}
-		} else {
-			phypeOut( val );
-		}
-	},
-	
-	// OP_ASSIGN_ARR
-	'9' : function(node) {
-		var varName = node.children[0];
-		var keys = execute( node.children[1] );
-		var value = execute( node.children[2] );
-		
-		// If keys is an (javascript) array, assign it as a multi-dimensional array.
-		if (typeof(keys) == 'object' && keys.length && keys.length != 'undefined')
-			linker.assignArrMulti( varName, keys, value );
-		// Otherwise, assign it ordinarily.
-		else
-			linker.assignArr( varName, keys, value );
-		
-		return value;
-	},
-	
-	// OP_FETCH_ARR
-	'10' : function(node) {
-		var varName = node.children[0];
-		var keys = execute( node.children[1] );
-		
-		var value = '';
-		// If keys is a JS array, fetch the value as a multi-dimensional PHP array.
-		if (typeof(keys) == 'object' && keys.length && keys.length != 'undefined')
-			value = linker.getArrValueMulti(varName, keys);
-		// Otherwise, fetch it ordinarily.
-		else {
-			value = linker.getArrValue(varName, keys);
-		}
-
-		return value;
-	},
-	
-	// OP_ARR_KEYS_R
-	'11' : function(node) {
-		var arrKeys = new Array();
-		
-		if ( node.children[0] ) {
-			// If the first child contains recursive array keys, fetch the the recursively defined array keys,
-			// and join these with the existing array keys.
-			if ( node.children[0].value == OP_ARR_KEYS_R ) {
-				arrKeys.join( execute( node.children[0] ) );
-			}
-			// Otherwise, insert the array key at the end of our list of array.
-			else {
-				arrKeys.push( execute( node.children[0] ) );
-			}
-		}
-		
-		// Add the last array key (if it exists) to the list of array keys.
-		if ( node.children[1] ) {
-			arrKeys.push( execute( node.children[1] ) );
-		}
-		
-		return arrKeys;
-	},
-	
-	// OP_OBJ_NEW
-	'12' : function(node) {
-		// Lookup potentially recursively defined class name
-		var className = linker.linkRecursively(node.children[0]);
-		
-		// Look up class in class table
-		var realClass = pstate.classTable[node.children[0]];
-		if (!realClass || realClass == 'undefined') {
-			throw classDefNotFound(node.children[0]);
-		}
-		
-		// Instantiate attributes
-		var obj = classLinker.createObjectFromClass(realClass);
-		
-		// Set state
-		pstate.curClass = className;
-		pstate.curObj = obj.objListEntry;
-		
-		// Get and execute constructor
-		var constructInvoke = null;
-		// First look for __contruct-function (higher precedence than class-named function as
-		// constructor)
-		if (realClass['funs']['__construct']) {
-			constructInvoke = createNode( NODE_OP, OP_OBJ_FCALL, createNode( NODE_VAR, 'this' ),
-									className, '__construct' );
-		}
-		// Then look for class-named function as constructor
-		else if (realClass['funs'][className]) {
-			constructInvoke = createNode( NODE_OP, OP_OBJ_FCALL, createNode( NODE_VAR, 'this' ),
-									className, className );
-		}
-		
-		// Only invoke the constructor if it is defined
-		if (constructInvoke)
-			execute( constructInvoke );
-		
-		//State rollback
-		pstate.curClass = '';
-		pstate.curObj = -1;
-		
-		// Return the instantiated object
-		return createValue( T_OBJECT, obj );
-	},
-	
-	// OP_OBJ_FCALL
-	'13' : function(node) {
-		var target = execute( node.children[0] );
-		if (!target) {
-			return execute( createNode(NODE_OP, OP_FCALL, node.children[1], node.children[2]) );
-		}
-		
-		// The function name can be defined by an expression. Execute it.
-		if (typeof(node.children[1]) != 'string')
-			node.children[1] = execute(node.children[1]);
-		
-		// Check if function name is recursively defined
-		var funName = linker.linkRecursively(node.children[1]);
-		
-		var targetClass = null;
-		var targetObj = -1;
-		if (target == 'this') {
-			targetClass = pstate.curClass;
-			targetObj = pstate.curObj;
-		} else {
-			if (target.type != T_OBJECT) {
-				throw invocationTargetInvalid(target.type);
-			}
-			
-			targetClass = pstate.objList[target.value.objListEntry].value.classDef;
-			targetObj = target.value.objListEntry;
-		}
-		
-		// Invoke function
-		{
-			// State preservation
-			var prevPassedParams = pstate.passedParams;
-			pstate.passedParams = 0;
-			
-			// Check if function name is recursively defined
-			var prevFun = pstate.curFun;
-			var prevClass = pstate.curClass;
-			var prevObj = pstate.curObj;
-			
-			// Set executing function and class
-			pstate.curFun = pstate.curClass+'::'+funName;
-			pstate.curClass = targetClass;
-			pstate.curObj = targetObj;
-	
-			// Check visibility
-			if (!classLinker.checkVisibility(pstate.curClass, targetClass, funName)) {
-				throw memberNotVisible(funName);
-			}
-			
-			// Fetch function
-			var f = pstate.classTable[targetClass]['funs'][funName]['member'];
-			// Initialize parameters for the function scope
-			if ( node.children[2] )
-				execute( node.children[2] );
-			
-			// If f expects no parameters, make sure params' length attribute is set correctly
-			if (!f.params.length)
-				f.params.length = 0;
-		
-			// Execute function
-			if ( f && f.params.length <= pstate.passedParams ) {
-				for ( var i=0; i<f.nodes.length; i++ )
-					execute( f.nodes[i] );
-			} else {
-				if (!f) {
-					throw funNotFound(funName);
-				} else if (!(f.params.length <= pstate.passedParams))
-					throw funInvalidArgCount(f.params.length);
-			}
-			
-			// Clear parameters for the function scope
-			for ( var i=0; i<f.params.length; i++ )
-				linker.unlinkVar( f.params[i] );
-			
-			// State roll-back
-			pstate.passedParams = prevPassedParams;
-			pstate.curFun = prevFun;
-			pstate.curClass = prevClass;
-			pstate.curObj = prevObj;
-			var ret = pstate['return'];
-			pstate['return'] = 0;
-			
-			// Return the value saved in .return in our valTable.
-			return ret;
-		}
-	},
-	
-	// OP_OBJ_FETCH
-	'14' : function(node) {
-		// The variable name can be defined by an expression. Execute it.
-		if (typeof(node.children[1]) != 'string')
-			node.children[1] = execute(node.children[1]);
-		
-		// Check if function name is recursively defined
-		var varName = linker.linkRecursively(node.children[1]);
-		
-		var targetClass = null;
-		var targetObj = -1;
-		var target = execute( node.children[0] );
-		if (target == 'this') {
-			targetClass = pstate.curClass;
-			targetObj = pstate.curObj;
-		} else {
-			if (target.type != T_OBJECT) {
-				throw invocationTargetInvalid(target.type);
-			}
-			
-			targetClass = pstate.objList[target.value.objListEntry];
-			targetObj = target.value.objListEntry;
-		}
-		
-		if (!classLinker.checkVisibility(pstate.curClass, targetClass.value.classDef, varName)) {
-			throw memberNotVisible(varName);
-		}
-		
-		if (targetObj == -1)
-			throw fetchTargetInvalid();
-			
-		var lookupStr = pstate.symTables['.global'][targetObj+'::'+varName];
-		if (lookupStr)
-			var refTable = linker.getRefTableByConsDef(lookupStr.substring(0,5));
-		
-		if (refTable)
-			return refTable[lookupStr.substring(5,lookupStr.length)];
-	},
-	
-	// OP_ATTR_ASSIGN
-	'15' : function(node) {
-		// Look up potentially recursive variable name
-		var varName = linker.linkRecursively(node.children[1]);
-		
-		// Figure out target object
-		var targetClass = null;
-		var targetObj = -1;
-		var target = execute( node.children[0] );
-		if (target == 'this') {
-			targetClass = pstate.curClass;
-			targetObj = pstate.curObj;
-		} else {
-			if (target.type != T_OBJECT) {
-				throw invocationTargetInvalid(target.type);
-			}
-			
-			targetClass = pstate.objList[target.value.objListEntry];
-			targetObj = target.value.objListEntry;
-		}
-		
-		if (targetObj == -1)
-			throw fetchTargetInvalid();
-		
-		// Check if the variable we are trying to assign to already contains an object;
-		// decrement the reference count for the object if this is the case.
-		var oldVal = null;
-		try {
-			oldVal = linker.getValueFromObj(targetObj, varName);
-		} catch (exception) {
-			if (exception!=varNotFound(varName))
-				throw exception;
-			else
-				oldVal = false;
-		}
-		
-		try {
-			var val = execute( node.children[2] );
-		} catch(exception) {
-			// If we get an undefined variable error, and the undefined variable is the variable
-			// we are currently defining, initialize the current variable to 0, and try assigning again.
-			if (exception == varNotFound(varName)) {
-				execute( createNode( NODE_OP, OP_ASSIGN, varName, createValue( T_INT, 0 ) ) );
-				val = execute( node.children[1] );
-			} else {
-				throw exception;
-			}
-		}
-		
-		// If we are assigning an object, increment its reference count.
-		if (oldVal.value != val.value) {
-			if (oldVal && oldVal.type == T_OBJECT)
-				classLinker.decrementObjectRef(linker.getValue(varName));
-			
-			if (val.type == T_OBJECT && oldVal.value != val.value)
-				val.value.references++;
-		}
-		
-		linker.assignVar( node.children[0], val );
-		
-		return val;
-	},
-	
-	// OP_EQU
-	'50' : function(node) {
-		var leftChild = execute(node.children[0]);
-		var rightChild = execute(node.children[1]);
-		var resultNode;
-		if (leftChild.value == rightChild.value)
-			resultNode = createValue(T_INT, 1);
-		else
-			resultNode = createValue(T_INT, 0);
-		return resultNode;
-	},
-	
-	// OP_NEQ
-	'51' : function(node) {
-		var leftChild = execute(node.children[0]);
-		var rightChild = execute(node.children[1]);
-		var resultNode;
-		if (leftChild.value != rightChild.value)
-			resultNode = createValue(T_INT, 1);
-		else
-			resultNode = createValue(T_INT, 0);
-		return resultNode;
-	},
-	
-	// OP_GRT
-	'52' : function(node) {
-		var leftChild = execute(node.children[0]);
-		var rightChild = execute(node.children[1]);
-		var resultNode;
-		if (parseInt(leftChild.value) > parseInt(rightChild.value))
-			resultNode = createValue(T_INT, 1);
-		else
-			resultNode = createValue(T_INT, 0);
-		return resultNode;
-		},
-	
-	// OP_LOT
-	'53' : function(node) {
-		var leftChild = execute(node.children[0]);
-		var rightChild = execute(node.children[1]);
-		var resultNode;
-		if (linker.getNumberFromNode(leftChild) < linker.getNumberFromNode(rightChild))
-			resultNode = createValue(T_INT, 1);
-		else
-			resultNode = createValue(T_INT, 0);
-
-		return resultNode;
-	},
-	
-	// OP_GRE
-	'54' : function(node) {
-				var leftChild = execute(node.children[0]);
-		var rightChild = execute(node.children[1]);
-		var resultNode;
-		if (linker.getNumberFromNode(leftChild) >= linker.getNumberFromNode(rightChild))
-			resultNode = createValue(T_INT, 1);
-		else
-			resultNode = createValue(T_INT, 0);
-		return resultNode;
-	},
-	
-	// OP_LOE
-	'55' : function(node) {
-		var leftChild = execute(node.children[0]);
-		var rightChild = execute(node.children[1]);
-		var resultNode;
-		if (linker.getNumberFromNode(leftChild) <= linker.getNumberFromNode(rightChild))
-			resultNode = createValue(T_INT, 1);
-		else
-			resultNode = createValue(T_INT, 0);
-		return resultNode;
-	},
-	
-	// OP_ADD
-	'56' : function(node) {
-		var leftChild = execute(node.children[0]);
-		var rightChild = execute(node.children[1]);
-		var leftValue;
-		var rightValue;
-		var type = T_INT;
-		
-		switch (leftChild.type) {
-			// TODO: Check for PHP-standard.
-			case T_INT:
-			case T_CONST:
-				leftValue = parseInt(leftChild.value);
-				break;
-			case T_FLOAT:
-				leftValue = parseFloat(leftChild.value);
-				type = T_FLOAT;
-				break;
-		}
-		switch (rightChild.type) {
-			// TODO: Check for PHP-standard.
-			case T_INT:
-			case T_CONST:
-				rightValue = parseInt(rightChild.value);
-				break;
-			case T_FLOAT:
-				rightValue = parseFloat(rightChild.value);
-				type = T_FLOAT;
-				break;
-		}
-
-		var result = leftValue + rightValue;
-		var resultNode = createValue(type, result);
-
-		return resultNode;
-	},
-
-	// OP_SUB
-	'57' : function(node) {
-		var leftChild = execute(node.children[0]);
-		var rightChild = execute(node.children[1]);
-		var result = leftChild.value - rightChild.value;
-		var resultNode = createValue(T_CONST, result);
-
-		return resultNode;
-	},
-	
-	// OP_DIV
-	'58' : function(node) {
-		var leftChild = execute(node.children[0]);
-		var rightChild = execute(node.children[1]);
-		var result = leftChild.value / rightChild.value;
-		var resultNode = createValue(T_CONST, result);
-
-		return resultNode;
-	},
-	
-	// OP_MUL
-	'59' : function(node) {
-		var leftChild = execute(node.children[0]);
-		var rightChild = execute(node.children[1]);
-		var result = leftChild.value * rightChild.value;
-		var resultNode = createValue(T_CONST, result);
-
-		return resultNode;
-	},
-	
-	// OP_NEG
-	'60' : function(node) {
-		var child = execute(node.children[0]);
-		var result = -(child.value);
-		var resultNode = createValue(T_CONST, result);
-
-		return resultNode;
-	},
-	
-	// OP_CONCAT
-	'61' : function(node) {
-		var leftChild = execute( node.children[0] );
-		var rightChild = execute( node.children[1] );
-
-		return createValue( T_CONST, leftChild.value+rightChild.value );
-	},
-	
-	// OP_BOOL_NEG
-	'62' : function(node) {
-		var val = execute( node.children[0] );
-		if (val.value) return createNode( NODE_INT, 0 );
-		else return createNode( NODE_INT, 1 );
 	}
-}
+};
+
+// OP_OBJ_FETCH
+ops[OP_OBJ_FETCH] = function(node) {
+	// The variable name can be defined by an expression. Execute it.
+	if (typeof(node.children[1]) != 'string')
+		node.children[1] = execute(node.children[1]);
+	
+	// Check if function name is recursively defined
+	var varName = linker.linkRecursively(node.children[1]);
+	
+	var targetClass = null;
+	var targetObj = -1;
+	var target = execute( node.children[0] );
+	if (target == 'this') {
+		targetClass = pstate.curClass;
+		targetObj = pstate.curObj;
+	} else {
+		if (target.type != T_OBJECT) {
+			throw invocationTargetInvalid(target.type);
+		}
+		
+		targetClass = pstate.objList[target.value.objListEntry];
+		targetObj = target.value.objListEntry;
+	}
+	
+	if (!classLinker.checkVisibility(pstate.curClass, targetClass.value.classDef, varName)) {
+		throw memberNotVisible(varName);
+	}
+	
+	if (targetObj == -1)
+		throw fetchTargetInvalid();
+		
+	var lookupStr = pstate.symTables['.global'][targetObj+'::'+varName];
+	if (lookupStr)
+		var refTable = linker.getRefTableByConsDef(lookupStr.substring(0,5));
+	
+	if (refTable)
+		return refTable[lookupStr.substring(5,lookupStr.length)];
+};
+
+// OP_ATTR_ASSIGN
+ops[OP_ATTR_ASSIGN] = function(node) {
+	// Look up potentially recursive variable name
+	var varName = linker.linkRecursively(node.children[1]);
+	
+	// Figure out target object
+	var targetClass = null;
+	var targetObj = -1;
+	var target = execute( node.children[0] );
+	if (target == 'this') {
+		targetClass = pstate.curClass;
+		targetObj = pstate.curObj;
+	} else {
+		if (target.type != T_OBJECT) {
+			throw invocationTargetInvalid(target.type);
+		}
+		
+		targetClass = pstate.objList[target.value.objListEntry];
+		targetObj = target.value.objListEntry;
+	}
+	
+	if (targetObj == -1)
+		throw fetchTargetInvalid();
+	
+	// Check if the variable we are trying to assign to already contains an object;
+	// decrement the reference count for the object if this is the case.
+	var oldVal = null;
+	try {
+		oldVal = linker.getValueFromObj(targetObj, varName);
+	} catch (exception) {
+		if (exception!=varNotFound(varName))
+			throw exception;
+		else
+			oldVal = false;
+	}
+	
+	try {
+		var val = execute( node.children[2] );
+	} catch(exception) {
+		// If we get an undefined variable error, and the undefined variable is the variable
+		// we are currently defining, initialize the current variable to 0, and try assigning again.
+		if (exception == varNotFound(varName)) {
+			execute( createNode( NODE_OP, OP_ASSIGN, varName, createValue( T_INT, 0 ) ) );
+			val = execute( node.children[1] );
+		} else {
+			throw exception;
+		}
+	}
+	
+	// If we are assigning an object, increment its reference count.
+	if (oldVal.value != val.value) {
+		if (oldVal && oldVal.type == T_OBJECT)
+			classLinker.decrementObjectRef(linker.getValue(varName));
+		
+		if (val.type == T_OBJECT && oldVal.value != val.value)
+			val.value.references++;
+	}
+	
+	linker.assignVar( node.children[0], val );
+	
+	return val;
+};
+
+// OP_EQU
+ops[OP_EQU] = function(node) {
+	var leftChild = execute(node.children[0]);
+	var rightChild = execute(node.children[1]);
+	var resultNode;
+	if (leftChild.value == rightChild.value)
+		resultNode = createValue(T_INT, 1);
+	else
+		resultNode = createValue(T_INT, 0);
+	return resultNode;
+};
+
+// OP_NEQ
+ops[OP_NEQ] = function(node) {
+	var leftChild = execute(node.children[0]);
+	var rightChild = execute(node.children[1]);
+	var resultNode;
+	if (leftChild.value != rightChild.value)
+		resultNode = createValue(T_INT, 1);
+	else
+		resultNode = createValue(T_INT, 0);
+	return resultNode;
+};
+
+// OP_GRT
+ops[OP_GRT] = function(node) {
+	var leftChild = execute(node.children[0]);
+	var rightChild = execute(node.children[1]);
+	var resultNode;
+	if (parseInt(leftChild.value) > parseInt(rightChild.value))
+		resultNode = createValue(T_INT, 1);
+	else
+		resultNode = createValue(T_INT, 0);
+	return resultNode;
+};
+
+// OP_LOT
+ops[OP_LOT] = function(node) {
+	var leftChild = execute(node.children[0]);
+	var rightChild = execute(node.children[1]);
+	var resultNode;
+	if (linker.getNumberFromNode(leftChild) < linker.getNumberFromNode(rightChild))
+		resultNode = createValue(T_INT, 1);
+	else
+		resultNode = createValue(T_INT, 0);
+
+	return resultNode;
+};
+
+// OP_GRE
+ops[OP_GRE] = function(node) {
+			var leftChild = execute(node.children[0]);
+	var rightChild = execute(node.children[1]);
+	var resultNode;
+	if (linker.getNumberFromNode(leftChild) >= linker.getNumberFromNode(rightChild))
+		resultNode = createValue(T_INT, 1);
+	else
+		resultNode = createValue(T_INT, 0);
+	return resultNode;
+};
+
+// OP_LOE
+ops[OP_LOE] = function(node) {
+	var leftChild = execute(node.children[0]);
+	var rightChild = execute(node.children[1]);
+	var resultNode;
+	if (linker.getNumberFromNode(leftChild) <= linker.getNumberFromNode(rightChild))
+		resultNode = createValue(T_INT, 1);
+	else
+		resultNode = createValue(T_INT, 0);
+	return resultNode;
+},
+
+// OP_ADD
+ops[OP_ADD] = function(node) {
+	var leftChild = execute(node.children[0]);
+	var rightChild = execute(node.children[1]);
+	var leftValue;
+	var rightValue;
+	var type = T_INT;
+	
+	switch (leftChild.type) {
+		// TODO: Check for PHP-standard.
+		case T_INT:
+		case T_CONST:
+			leftValue = parseInt(leftChild.value);
+			break;
+		case T_FLOAT:
+			leftValue = parseFloat(leftChild.value);
+			type = T_FLOAT;
+			break;
+	}
+	switch (rightChild.type) {
+		// TODO: Check for PHP-standard.
+		case T_INT:
+		case T_CONST:
+			rightValue = parseInt(rightChild.value);
+			break;
+		case T_FLOAT:
+			rightValue = parseFloat(rightChild.value);
+			type = T_FLOAT;
+			break;
+	}
+
+	var result = leftValue + rightValue;
+	var resultNode = createValue(type, result);
+
+	return resultNode;
+};
+
+// OP_SUB
+ops[OP_SUB] = function(node) {
+	var leftChild = execute(node.children[0]);
+	var rightChild = execute(node.children[1]);
+	var result = leftChild.value - rightChild.value;
+	var resultNode = createValue(T_CONST, result);
+
+	return resultNode;
+};
+
+// OP_DIV
+ops[OP_DIV] = function(node) {
+	var leftChild = execute(node.children[0]);
+	var rightChild = execute(node.children[1]);
+	var result = leftChild.value / rightChild.value;
+	var resultNode = createValue(T_CONST, result);
+
+	return resultNode;
+};
+
+// OP_MUL
+ops[OP_MUL] = function(node) {
+	var leftChild = execute(node.children[0]);
+	var rightChild = execute(node.children[1]);
+	var result = leftChild.value * rightChild.value;
+	var resultNode = createValue(T_CONST, result);
+
+	return resultNode;
+};
+
+// OP_NEG
+ops[OP_NEG] = function(node) {
+	var child = execute(node.children[0]);
+	var result = -(child.value);
+	var resultNode = createValue(T_CONST, result);
+
+	return resultNode;
+};
+
+// OP_CONCAT
+ops[OP_CONCAT] = function(node) {
+	var leftChild = execute( node.children[0] );
+	var rightChild = execute( node.children[1] );
+
+	return createValue( T_CONST, leftChild.value+rightChild.value );
+};
+
+// OP_BOOL_NEG
+ops[OP_BOOL_NEG] = function(node) {
+	var val = execute( node.children[0] );
+	if (val.value) return createNode( NODE_INT, 0 );
+	else return createNode( NODE_INT, 1 );
+};
 
 function execute( node ) {
 	// Reset term-event boolean and terminate currently executing action, if a terminate-event
@@ -1949,7 +1951,7 @@ function interpret(str) {
 /////////////
 
 // If we are not in our test suite, load all the scripts all at once.
-if (!phypeTestSuite) {
+if (!phypeTestSuite && !fromShell) {
 	var str = phypeIn();
 
 	interpret(str);
@@ -1959,7 +1961,7 @@ if (!phypeTestSuite) {
 	}
 }
 // If we are, parse it accordingly
-else if (phpScripts) {
+else if (phpScripts && !fromShell) {
 	var phypeTestDoc;
 
 	phypeTestDoc.write('<table class="phypeTest">\n');
