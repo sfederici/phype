@@ -560,7 +560,7 @@ var linker = {
 		
 		var firstChar = varNameVal.substring(0,1);
 		if (firstChar == "$") {
-			varName = linker.getValue( varNameVal.substring( 1,varNameVal.length ) );
+			varName = linker.getValue( varNameVal.substring( 1,varNameVal.length ) ).value;
 		}
 		
 		return varName;
@@ -695,19 +695,6 @@ var classLinker = {
 					return true;
 				else throw 'Inheritance not yet supported.';
 		}
-	},
-	
-	assignObjToVar : function(varName, obj, scope) {
-		if (!scope)
-			scope = pstate.curFun;
-			
-		if (typeof(pstate.symTables[scope]) != 'object')
-			pstate.symTables[scope] = {};
-
-		var prefix = linker.getConsDefByVal(val);
-		
-		pstate.symTables[scope][varName] = prefix+scope+'#'+varName
-		
 	}
 }
 
@@ -919,7 +906,7 @@ var ops = {
 				val.value.references++;
 		}
 		
-		linker.assignVar( node.children[0], val );
+		linker.assignVar( varName, val );
 		
 		return val;
 	},
@@ -1906,11 +1893,12 @@ if (!phypeIn || phypeIn == 'undefined') {
 				//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
 				"<?" +
 				"$i = 0;" +
-				" echo ($i < 10);"+
 				"while ($i < 10) {" +
-				"	echo $i;" +
+				"	$test = 'hej'.$i;" +
+				"	$$$test = 'hello world';" +
 				"	$i = $i+1;" +
 				"}" +
+				"echo $hej9;" +
 				"?>"
 			);
 	};
@@ -1972,6 +1960,15 @@ if (!phypeTestSuite) {
 }
 // If we are, parse it accordingly
 else if (phpScripts) {
+	var phypeTestDoc;
+
+	phypeTestDoc.write('<table class="phypeTest">\n');
+	phypeTestDoc.write('<tr>\n');
+	phypeTestDoc.write('<th>Name of test case</th>\n');
+	phypeTestDoc.write('<th>Exec time</th>\n');
+	phypeTestDoc.write('<th>Status</th>\n');
+	phypeTestDoc.write('</tr>\n');
+	
 	for (var i=0; i<phpScripts.length; i++) {
 		var script = phpScripts[i];
 
@@ -1979,6 +1976,7 @@ else if (phpScripts) {
 		var error_off	= new Array();
 		var error_la	= new Array();
 		
+		// HACK: It doesn't work unless we parse it once before our actual parse ...
 		if (i>0) __parse( preParse(script.code) );
 		resetState();
 		
@@ -1986,8 +1984,14 @@ else if (phpScripts) {
 		
 		var failed = false;
 		var thrownException = null;
+		var secs = 'Unknown';
 		try {
-			if( ( error_cnt = __parse( preParse(script.code), error_off, error_la ) ) > 0 ) {
+			var begin = new Date();
+			var error_cnt = __parse( preParse(script.code), error_off, error_la );
+			var end = new Date();
+			secs = ((end.getTime() - begin.getTime())/1000)+" sec";
+			
+			if( error_cnt > 0 ) {
 				for(var i=0; i<error_cnt; i++)
 					throw  "Parse error near >" 
 						+ script.code.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" ;
@@ -1998,25 +2002,36 @@ else if (phpScripts) {
 		}
 		
 		if (pstate.assertion) {
+			phypeTestDoc.write('<tr>\n');
+			phypeTestDoc.writeTitle(script.name);
+			phypeTestDoc.writeExecTime(secs);
 			switch (pstate.assertion.type) {
 				case ASS_ECHO:
-					if (phypeEcho != pstate.assertion.value)
-						phypeDoc.write('"'+script.name+'" failed assertion. Expected output: "'+
-								pstate.assertion.value+'". Actual output: "'+phypeEcho+'".<br/>\n<br/>\n');
-					if (thrownException)
-						throw thrownException;
+ 					if (thrownException)
+						phypeTestDoc.writeStatus('fail', 'Thrown exception: '+thrownException);
+					else if (phypeEcho != pstate.assertion.value) {
+						phypeTestDoc.write('Expected output: "'+pstate.assertion.value +
+											'". Actual output: "'+phypeEcho+'".\n<br/>');
+					} else {
+						phypeTestDoc.writeStatus('pass', 'OK');
+					}
 					break;
 				case ASS_FAIL:
 					if (!failed)
-						phypeDoc.write('"'+script.name+'" failed assertion. Expected script to fail,'+
+						phypeTestDoc.writeStatus('fail','Expected script to fail,'+
 								' but no exceptions were raised.<br/>\n<br/>\n');
+					else {
+						phypeTestDoc.writeStatus('pass', OK);
+					}
 			}
 			pstate.assertion = null;
+			phypeTestDoc.write('</tr>\n');
 		}
 	}
-	if (phypeDoc && phypeDoc.open) {
-		phypeDoc.write('Testing done!');
-		phypeDoc.close();
+	phypeTestDoc.write('</table>\n');
+	if (phypeTestDoc.open) {
+		phypeTestDoc.write('Testing done!');
+		phypeTestDoc.close();
 	}
 }
 

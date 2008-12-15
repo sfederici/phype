@@ -26,7 +26,23 @@ function loadPHPScripts() {
 
 phpScripts = loadPHPScripts();
 // Set our phypeDoc-variable. This should contain the document that phype should output to.
-var phypeDoc = document;
+var phypeTestDoc = {
+	writeTitle : function(str) {
+		document.write('<td class="scriptTitle">'+str+'</td>\n');
+	},
+	
+	writeExecTime : function(str) {
+		document.write('<td class="execTime">'+str+'</td>\n');
+	},
+	
+	writeStatus : function(statusType, str) {
+		document.write('<td class="'+statusType+'">'+str+'</td>');
+	},
+	
+	write : function(str) {
+		document.write(str);
+	}
+}
 
 // Set our echo-accumulation variable used for testing assertions against after parsing.
 var phypeEcho = '';
