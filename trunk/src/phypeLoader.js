@@ -1,4 +1,4 @@
-var inBrowser = true;
+var fromShell = false;
 
 function loadPHP() {
 	var phpCode = '';
