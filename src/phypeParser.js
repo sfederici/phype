@@ -611,7 +611,6 @@ var classLinker = {
         // Init object and add it to the list of objects.
         var objListLength = pstate.objList.length;
         var obj = createObject( objListLength, classDef.name );
-        var_log(pstate.objList);
         pstate.objList[pstate.objList.length] = createValue( T_OBJECT, obj );
         
         // Init variable list
@@ -1150,8 +1149,6 @@ var ops = {
         pstate.curClass = className;
         pstate.curObj = obj.objListEntry;
         
-        var_log(realClass);
-        
         // Get and execute constructor
         var constructInvoke = null;
         // First look for __contruct-function (higher precedence than class-named function as
@@ -1229,8 +1226,6 @@ var ops = {
             
             // Fetch function
             var f = pstate.classTable[targetClass]['funs'][funName]['member'];
-            var_log(targetClass);
-            var_log(funName);
             // Initialize parameters for the function scope
             if ( node.children[2] )
                 execute( node.children[2] );
