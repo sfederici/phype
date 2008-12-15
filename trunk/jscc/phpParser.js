@@ -599,6 +599,22 @@ var linker = {
 			symName = '.unset';
 		
 		return symName.substring(0,5);
+	},
+	
+	getNumberFromNode : function(node) {
+		var num = null;
+		switch (node.type) {
+			// TODO: Check for PHP-standard.
+			case T_INT:
+			case T_CONST:
+				num = parseInt(node.value);
+				break;
+			case T_FLOAT:
+				num = parseFloat(node.value);
+				break;
+		}
+
+		return num;
 	}
 }
 
@@ -927,21 +943,20 @@ var ops = {
 	
 	// OP_WHILE_DO
 	'3' : function(node) {
-		var ret = 0;
-		while( execute( node.children[0] ) )
-			ret = ret+execute( node.children[1] );
-			
-		return ret;
+		var ret = false;
+		var tmp = execute( node.children[0] );
+		while( tmp.value ) {
+			execute( node.children[1] );
+			tmp = execute( node.children[0] );
+		}
 	},
 
 	// OP_DO_WHILE
 	'4' : function(node) {
 		var ret = 0;
 		do {
-			ret = ret+execute( node.children[0] );
+			execute( node.children[0] );
 		} while( execute( node.children[1] ) );
-		
-		return ret;
 	},
 	
 	// OP_FCALL
@@ -1393,7 +1408,7 @@ var ops = {
 		var leftChild = execute(node.children[0]);
 		var rightChild = execute(node.children[1]);
 		var resultNode;
-		if (leftChild.value > rightChild.value)
+		if (parseInt(leftChild.value) > parseInt(rightChild.value))
 			resultNode = createValue(T_CONST, 1);
 		else
 			resultNode = createValue(T_CONST, 0);
@@ -1405,10 +1420,11 @@ var ops = {
 		var leftChild = execute(node.children[0]);
 		var rightChild = execute(node.children[1]);
 		var resultNode;
-		if (leftChild.value < rightChild.value)
+		if (linker.getNumberFromNode(leftChild) < linker.getNumberFromNode(rightChild))
 			resultNode = createValue(T_CONST, 1);
 		else
 			resultNode = createValue(T_CONST, 0);
+
 		return resultNode;
 	},
 	
@@ -1417,7 +1433,7 @@ var ops = {
 				var leftChild = execute(node.children[0]);
 		var rightChild = execute(node.children[1]);
 		var resultNode;
-		if (leftChild.value >= rightChild.value)
+		if (linker.getNumberFromNode(leftChild) >= linker.getNumberFromNode(rightChild))
 			resultNode = createValue(T_CONST, 1);
 		else
 			resultNode = createValue(T_CONST, 0);
@@ -1429,7 +1445,7 @@ var ops = {
 		var leftChild = execute(node.children[0]);
 		var rightChild = execute(node.children[1]);
 		var resultNode;
-		if (leftChild.value <= rightChild.value)
+		if (linker.getNumberFromNode(leftChild) <= linker.getNumberFromNode(rightChild))
 			resultNode = createValue(T_CONST, 1);
 		else
 			resultNode = createValue(T_CONST, 0);
@@ -1715,7 +1731,7 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
 		|	IF Expression Stmt 			[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
 		|	IF Expression Stmt ELSE Stmt	
 										[* %% = createNode( NODE_OP, OP_IF_ELSE, %2, %3, %5 ); *]
-		|	WHILE Expression DO Stmt 	[* %% = createNode( NODE_OP, OP_WHILE_DO, %2, %4 ); *]
+		|	WHILE Expression Stmt 	[* %% = createNode( NODE_OP, OP_WHILE_DO, %2, %3 ); *]
 		|	DO Stmt WHILE Expression ';'	
 										[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
 		|	ECHO Expression ';'			[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
@@ -1862,7 +1878,7 @@ Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
 if (!phypeIn || phypeIn == 'undefined') {
 	var phypeIn = function() {
 		// Running from V8 or another shell JS-app
-		if (typeof(alert) == typeof(undefined)) {
+		if (typeof(alert) == 'undefined') {
 			return '';
 		}
 		// Running from browser
@@ -1872,9 +1888,11 @@ if (!phypeIn || phypeIn == 'undefined') {
 				//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
 				//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
 				"<?" +
-				"$arr['foo'] = 'hello';" +
-				"$arr[1] = 'world';" +
-				"echo $arr['foo'].' '.$arr[1];" +
+				"$i = 0;" +
+				"while ($i < 10) {" +
+				"	echo $i;" +
+				"	$i = $i+1;" +
+				"}" +
 				"?>"
 			);
 	};
@@ -1883,7 +1901,7 @@ if (!phypeIn || phypeIn == 'undefined') {
 // Set phypeOut if it is not set.
 if (!phypeOut || phypeOut == 'undefined') {
 	// Running from V8 or another shell JS-app
-	if (typeof(alert) == typeof(undefined))
+	if (typeof(alert) == 'undefined')
 		var phypeOut = print;
 	else // Running from browser
 		var phypeOut = alert;
