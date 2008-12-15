@@ -1,3 +1,5 @@
+var inBrowser = true;
+
 function loadPHP() {
 	var phpCode = '';
 	var scripts = document.getElementsByTagName('script');

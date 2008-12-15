@@ -1,3 +1,5 @@
+var inBrowser = true;
+
 function SCRIPT(name, code) {
 	this.name = name;
 	this.code = code;
