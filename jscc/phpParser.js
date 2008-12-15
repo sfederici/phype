@@ -3,9 +3,8 @@
 // GLOBALLY USED VARS AND FUNCTIONS //
 //////////////////////////////////////
 
-// If defined, this variable tells whether we should parse and check assertions.
+// Defined via loader
 var phypeTestSuite;
-// Contains scripts to execute
 var phpScripts;
 var phypeDoc;
 var fromShell;
