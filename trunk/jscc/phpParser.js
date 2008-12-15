@@ -360,7 +360,7 @@ var linker = {
 				ret = clone(refTable[lookupStr]);
 			return ret;
 		}
-		
+
 		throw varNotFound(varName);
 	},
 	
@@ -883,7 +883,7 @@ var ops = {
 			
 		// Look up potentially recursive variable name
 		var varName = linker.linkRecursively(node.children[0]);
-		
+
 		// Check if the variable we are trying to assign to already contains an object;
 		// decrement the reference count for the object if this is the case.
 		var oldVal = null;
@@ -1735,9 +1735,7 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
 		|	DO Stmt WHILE Expression ';'	
 										[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
 		|	ECHO Expression ';'			[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
-		|	Variable '=' Expression ';'	[* %% = createNode( NODE_OP, OP_ASSIGN, %1, %3 ); *]
-		|	Target '->' AttributeAccess '=' Expression ';'
-										[* %% = createNode( NODE_OP, OP_ATTR_ASSIGN, %1, %3, %5 ); *]
+		|	AssignmentStmt ';'
 		|	ClassDefinition
 		|	FunctionDefinition
 		|	Variable ArrayIndices '=' Expression ';'
@@ -1751,7 +1749,13 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
 										*]
 		|	'//' AssertStmt
 		;
-		
+
+AssignmentStmt:
+			Variable '=' Expression		[* %% = createNode( NODE_OP, OP_ASSIGN, %1, %3 ); *]
+		|	Target '->' AttributeAccess '=' Expression
+										[* %% = createNode( NODE_OP, OP_ATTR_ASSIGN, %1, %3, %5 ); *]
+		;
+
 AssertStmt:	Identifier String
 										[*	
 											if (phypeTestSuite && %1 == "assertEcho") {
@@ -1787,7 +1791,8 @@ Target:		Expression
 		;
 
 ExpressionNotFunAccess:
-			BinaryOp
+			AssignmentStmt
+		|	BinaryOp
 		|	NewToken FunctionInvoke ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_OBJ_NEW, %2, %3 ); *]
 		|	Target '->' MemberAccess	[* %3.children[0] = %1; %% = %3; *]
@@ -1795,13 +1800,8 @@ ExpressionNotFunAccess:
 		|	'(' Expression ')'			[* %% = %2; *]
 		;
 		
-Expression:	BinaryOp
-		|	NewToken FunctionInvoke ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_OBJ_NEW, %2, %3 ); *]
-		|	Target '->' MemberAccess	[* %3.children[0] = %1; %% = %3; *]
+Expression:	ExpressionNotFunAccess
 		|	FunctionAccess
-		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
-		|	'(' Expression ')'			[* %% = %2; *]
 		;
 
 FunctionInvoke:
@@ -1888,11 +1888,7 @@ if (!phypeIn || phypeIn == 'undefined') {
 				//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
 				//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
 				"<?" +
-				"$i = 0;" +
-				"while ($i < 10) {" +
-				"	echo $i;" +
-				"	$i = $i+1;" +
-				"}" +
+				"echo ($i = 0);" +
 				"?>"
 			);
 	};
@@ -1978,21 +1974,23 @@ else if (phpScripts) {
 			failed = true;
 			thrownException = exception;
 		}
-
-		switch (pstate.assertion.type) {
-			case ASS_ECHO:
-				if (phypeEcho != pstate.assertion.value)
-					phypeDoc.write('"'+script.name+'" failed assertion. Expected output: "'+
-							pstate.assertion.value+'". Actual output: "'+phypeEcho+'".<br/>\n<br/>\n');
-				if (thrownException)
-					throw thrownException;
-				break;
-			case ASS_FAIL:
-				if (!failed)
-					phypeDoc.write('"'+script.name+'" failed assertion. Expected script to fail,'+
-							' but no exceptions were raised.<br/>\n<br/>\n');
+		
+		if (pstate.assertion) {
+			switch (pstate.assertion.type) {
+				case ASS_ECHO:
+					if (phypeEcho != pstate.assertion.value)
+						phypeDoc.write('"'+script.name+'" failed assertion. Expected output: "'+
+								pstate.assertion.value+'". Actual output: "'+phypeEcho+'".<br/>\n<br/>\n');
+					if (thrownException)
+						throw thrownException;
+					break;
+				case ASS_FAIL:
+					if (!failed)
+						phypeDoc.write('"'+script.name+'" failed assertion. Expected script to fail,'+
+								' but no exceptions were raised.<br/>\n<br/>\n');
+			}
+			pstate.assertion = null;
 		}
-		pstate.assertion = null;
 	}
 	if (phypeDoc && phypeDoc.open) {
 		phypeDoc.write('Testing done!');
