@@ -1,6 +1,6 @@
 #summary Description of the implementation of Phype
 #labels Phase-Implementation
-== Table of contents ==
+== !PhypeDoc table of contents ==
   # [PhypeDoc]
   # [ThePhypeProject The Phype Project]
   # Implementation
