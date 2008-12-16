@@ -4,7 +4,7 @@
 = About !PhypeDoc =
 Phype is a project formed in connection with the course [http://www.daimi.au.dk/~amoeller/VM Design of Virtual Machines for Object Oriented Languages] at [http://www.daimi.au.dk DAIMI]. For this project we hand in a report of around 10 pages, containing a description of the project and the implementation, benchmark and footprint numbers, along with the sourcecode.
 
-!PhypeDoc is the wikified version of this document, and below a table of contents can be found.
+!PhypeDoc is the wikified version of this document, and the table of contents can be found below.
 
 == Table of contents ==
   # !PhypeDoc
