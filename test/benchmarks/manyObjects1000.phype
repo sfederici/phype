@@ -1,6 +1,6 @@
 <?
 // assertEcho 'hello world'
-class test {
+class test1000 {
 	function hi() {
 		return 'hello world';
 	}
@@ -11,7 +11,7 @@ $varName = 'test';
 while ($i < 1000) {
 	$$varName = '';
 	$varName = 'test'.$i;
-	$$varName = new test();
+	$$varName = new test1000();
 	$i = $i+1;
 }
 

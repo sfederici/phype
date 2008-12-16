@@ -1499,9 +1499,36 @@ ops[OP_ADD] = function(node) {
 ops[OP_SUB] = function(node) {
 	var leftChild = execute(node.children[0]);
 	var rightChild = execute(node.children[1]);
-	var result = leftChild.value - rightChild.value;
-	var resultNode = createValue(T_CONST, result);
+	var leftValue;
+	var rightValue;
+	var type = T_INT;
+	
+	switch (leftChild.type) {
+		// TODO: Check for PHP-standard.
+		case T_INT:
+		case T_CONST:
+			leftValue = parseInt(leftChild.value);
+			break;
+		case T_FLOAT:
+			leftValue = parseFloat(leftChild.value);
+			type = T_FLOAT;
+			break;
+	}
+	switch (rightChild.type) {
+		// TODO: Check for PHP-standard.
+		case T_INT:
+		case T_CONST:
+			rightValue = parseInt(rightChild.value);
+			break;
+		case T_FLOAT:
+			rightValue = parseFloat(rightChild.value);
+			type = T_FLOAT;
+			break;
+	}
 
+	var result = leftValue - rightValue;
+	var resultNode = createValue(type, result);
+	
 	return resultNode;
 };
 
@@ -1509,8 +1536,35 @@ ops[OP_SUB] = function(node) {
 ops[OP_DIV] = function(node) {
 	var leftChild = execute(node.children[0]);
 	var rightChild = execute(node.children[1]);
-	var result = leftChild.value / rightChild.value;
-	var resultNode = createValue(T_CONST, result);
+	var leftValue;
+	var rightValue;
+	var type = T_INT;
+	
+	switch (leftChild.type) {
+		// TODO: Check for PHP-standard.
+		case T_INT:
+		case T_CONST:
+			leftValue = parseInt(leftChild.value);
+			break;
+		case T_FLOAT:
+			leftValue = parseFloat(leftChild.value);
+			type = T_FLOAT;
+			break;
+	}
+	switch (rightChild.type) {
+		// TODO: Check for PHP-standard.
+		case T_INT:
+		case T_CONST:
+			rightValue = parseInt(rightChild.value);
+			break;
+		case T_FLOAT:
+			rightValue = parseFloat(rightChild.value);
+			type = T_FLOAT;
+			break;
+	}
+
+	var result = leftValue / rightValue;
+	var resultNode = createValue(type, result);
 
 	return resultNode;
 };
@@ -1519,9 +1573,36 @@ ops[OP_DIV] = function(node) {
 ops[OP_MUL] = function(node) {
 	var leftChild = execute(node.children[0]);
 	var rightChild = execute(node.children[1]);
-	var result = leftChild.value * rightChild.value;
-	var resultNode = createValue(T_CONST, result);
+	var leftValue;
+	var rightValue;
+	var type = T_INT;
+	
+	switch (leftChild.type) {
+		// TODO: Check for PHP-standard.
+		case T_INT:
+		case T_CONST:
+			leftValue = parseInt(leftChild.value);
+			break;
+		case T_FLOAT:
+			leftValue = parseFloat(leftChild.value);
+			type = T_FLOAT;
+			break;
+	}
+	switch (rightChild.type) {
+		// TODO: Check for PHP-standard.
+		case T_INT:
+		case T_CONST:
+			rightValue = parseInt(rightChild.value);
+			break;
+		case T_FLOAT:
+			rightValue = parseFloat(rightChild.value);
+			type = T_FLOAT;
+			break;
+	}
 
+	var result = leftValue * rightValue;
+	var resultNode = createValue(type, result);
+	
 	return resultNode;
 };
 
@@ -1529,7 +1610,7 @@ ops[OP_MUL] = function(node) {
 ops[OP_NEG] = function(node) {
 	var child = execute(node.children[0]);
 	var result = -(child.value);
-	var resultNode = createValue(T_CONST, result);
+	var resultNode = createValue(child.type, result);
 
 	return resultNode;
 };
@@ -1828,7 +1909,7 @@ Target:		Expression
 
 ExpressionNotFunAccess:
 			AssignmentStmt
-		|	BinaryOp
+		|	BinaryExp
 		|	NewToken FunctionInvoke ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_OBJ_NEW, %2, %3 ); *]
 		|	Target '->' MemberAccess	[* %3.children[0] = %1; %% = %3; *]
@@ -1875,7 +1956,7 @@ ArrayIndices:
 		|	'[' Expression ']'			[* %% = %2; *]
 		;
 
-BinaryOp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
+BinaryExp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
 		|	Expression '<' AddSubExp	[* %% = createNode( NODE_OP, OP_LOT, %1, %3 ); *]
 		|	Expression '>' AddSubExp	[* %% = createNode( NODE_OP, OP_GRT, %1, %3 ); *]
 		|	Expression '<=' AddSubExp	[* %% = createNode( NODE_OP, OP_LOE, %1, %3 ); *]
@@ -1889,13 +1970,13 @@ AddSubExp:	AddSubExp '-' MulDivExp		[* %% = createNode( NODE_OP, OP_SUB, %1, %3 
 		|	AddSubExp '+' MulDivExp		[* %% = createNode( NODE_OP, OP_ADD, %1, %3 ); *]
 		|	MulDivExp
 		;
-				
-MulDivExp:	MulDivExp '*' UnaryOp		[* %% = createNode( NODE_OP, OP_MUL, %1, %3 ); *]
-		|	MulDivExp '/' UnaryOp		[* %% = createNode( NODE_OP, OP_DIV, %1, %3 ); *]
-		|	UnaryOp
+		
+MulDivExp:	MulDivExp '*' UnaryExp		[* %% = createNode( NODE_OP, OP_MUL, %1, %3 ); *]
+		|	MulDivExp '/' UnaryExp		[* %% = createNode( NODE_OP, OP_DIV, %1, %3 ); *]
+		|	UnaryExp
 		;
 				
-UnaryOp:	'-' Value					[* %% = createNode( NODE_OP, OP_NEG, %2 ); *]
+UnaryExp:	'-' Value					[* %% = createNode( NODE_OP, OP_NEG, %2 ); *]
 		|	'!' Expression				[* %% = createNode( NODE_OP, OP_BOOL_NEG, %2 ); *]
 		|	Value
 		;
@@ -1949,7 +2030,7 @@ if (!phypeIn || phypeIn == 'undefined') {
 if (!phypeOut || phypeOut == 'undefined') {
 	// Running from V8 or another shell JS-app
 	if (typeof(alert) == 'undefined')
-		var phypeOut = print;
+		var phypeOut = function() {};//print;
 	else // Running from browser
 		var phypeOut = alert;
 }
@@ -1988,27 +2069,7 @@ function interpret(str) {
 /////////////
 // PARSING //
 /////////////
-/*phypeTestSuite = true;
-var phpScripts =  [];
-var phypeTestDoc = {
-	writeTitle : function(str) {
-		document.write('<td class="scriptTitle">'+str+'</td>\n');
-	},
-	
-	writeExecTime : function(str) {
-		document.write('<td class="execTime">'+str+'</td>\n');
-	},
-	
-	writeStatus : function(statusType, str) {
-		document.write('<td class="'+statusType+'">'+str+'</td>');
-	},
-	
-	write : function(str) {
-		document.write(str);
-	}
-};
-phpScripts[0] = { 'name' : 'test', 'code' : "<? //assertEcho 'hello world' $i = 0;$j = 0;$k = 0;while ($i < 100) { while ($j < 100) { while ($k < 100) { $arr[$i][$j][$k] = 'hello world'; $i = $i+1; $j = $j+1; $k = $k+1; } }}echo $arr[99][99][99];?>" };
-*/
+
 // If we are not in our test suite, load all the scripts all at once.
 if (!phypeTestSuite && !fromShell) {
 	var str = phypeIn();
@@ -2086,19 +2147,6 @@ else if (phpScripts && !fromShell) {
 		phypeTestDoc.close();
 	}
 }
-
-/*
-log('SymTables');
-var_log(pstate.symTables);
-log('ObjList');
-var_log(pstate.objList);
-log('ObjMapping');
-var_log(pstate.objMapping);
-log('Values');
-var_log(pstate.valTable);
-log('Arrays');
-var_log(pstate.arrTable);
-*/
 
 ///////////////
 // DEBUGGING //
