@@ -1,4 +1,5 @@
 var fromShell = false;
+var phypeTestSuite = true;
 
 /**
  * Borrowed from http://snippets.dzone.com/posts/show/2025

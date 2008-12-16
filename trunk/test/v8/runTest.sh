@@ -1,6 +1,6 @@
 #!/bin/bash
 touch scripts.js
-cat ../../src/phypeParserMin.js > scripts.js
+cat ../../src/phypeParser.js > scripts.js
 php -f generateTestScript.php >> scripts.js
 echo '::::::::::::::::::::::::'
 echo ':: JAVASCRIPT RESULTS ::'

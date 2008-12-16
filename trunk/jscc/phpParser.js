@@ -9,6 +9,24 @@ var phpScripts;
 var phypeDoc;
 var fromShell;
 
+// Phype array. When an array is assigned into a JSON-object, it loses its properties and
+// functions. We create our own JSON-based array object to prevent this.
+var phypeArrayObject = {
+	'length' : 0,
+	'push' : function(elm) {
+		this[this.length] = elm;
+		this.length = this.length+1;
+	},
+	'pop' : function() {
+		delete this[this.length-1];
+		this.length = this.length-1;
+	}
+}
+
+function newPhypeArr() {
+	return clone(phypeArrayObject);
+}
+
 // Constants used for keeping track of states and variables.
 var cons = {
 	global : '.global',
@@ -32,7 +50,7 @@ var pstate = {
 	/**
 	 * Table for keeping actual objects
 	 */
-	objList : [],
+	objList : newPhypeArr(),
 	
 	
 	// FORMAL DECLARATIONS
@@ -58,7 +76,7 @@ var pstate = {
 	/**
 	 * Variable for keeping track of formal parameters for a function declaration.
 	 */
-	curParams : [],
+	curParams : newPhypeArr(),
 	
 	/**
 	 * Variable for keeping track of currently passed actual parameters of a function invocation.
@@ -348,7 +366,6 @@ var linker = {
 				ret = pstate.objList[refTable[lookupStr]];
 			else
 				ret = clone(refTable[lookupStr]);
-				
 			return ret;
 		} else if (typeof(pstate.symTables[cons.global])=='string') {
 			var lookupStr = pstate.symTables[cons.global][cleanVarName];
@@ -628,7 +645,7 @@ var classLinker = {
 		// Init object and add it to the list of objects.
 		var objListLength = pstate.objList.length;
 		var obj = createObject( objListLength, classDef.name );
-		pstate.objList[pstate.objList.length] = createValue( T_OBJECT, obj );
+		pstate.objList.push(createValue( T_OBJECT, obj ));
 		
 		// Init variable list
 		for (var attr in classDef.attrs) {
@@ -898,7 +915,6 @@ ops[OP_ASSIGN] = function(node) {
 			throw exception;
 		}
 	}
-	
 	// If we are assigning an object, increment its reference count.
 	if (oldVal.value != val.value) {
 		if (oldVal && oldVal.type == T_OBJECT)
@@ -1011,15 +1027,16 @@ ops[OP_PASS_PARAM] = function(node) {
 
 	if (!f)
 		throw funNotFound();
-		
+
 	// Link parameter name with passed value
 	if ( node.children[0] ) {
-		if ( node.children[0].value != OP_PASS_PARAM ) {
+		if ( node.children[0].type != 0 ||
+				node.children[0].type == 0 && node.children[0].value != OP_PASS_PARAM ) {
 			// Initialize parameter name
 			var paramName = '';
-			if ( pstate.passedParams < f.params.length )
+			if ( pstate.passedParams < f.params.length ) {
 				paramName = f.params[pstate.passedParams].value;
-			else
+			} else
 				paramName = '.arg'+pstate.passedParams;
 
 			// Link
@@ -1029,7 +1046,6 @@ ops[OP_PASS_PARAM] = function(node) {
 			execute( node.children[0] );
 		}
 	}
-	
 	if ( node.children[1] ) {
 		// Initialize parameter name
 		var paramName = '';
@@ -1044,7 +1060,7 @@ ops[OP_PASS_PARAM] = function(node) {
 	}
 };
 
-// OP_RETURN
+// OP_RETURNs
 ops[OP_RETURN] = function(node) {
 	if (node.children[0])
 		pstate['return'] = execute( node.children[0] );
@@ -1056,7 +1072,7 @@ ops[OP_RETURN] = function(node) {
 ops[OP_ECHO] = function(node) {
 	var val = execute( node.children[0] );
 	
-	if (typeof(val) != 'string') {
+	if (typeof(val) != 'string' && val) {
 		switch (val.type) {
 			case T_INT:
 			case T_FLOAT:
@@ -1178,9 +1194,13 @@ ops[OP_OBJ_NEW] = function(node) {
 
 // OP_OBJ_FCALL
 ops[OP_OBJ_FCALL] = function(node) {
-	var target = execute( node.children[0] );
+	var target = false;
+	if (node.children[0])
+		target = execute( node.children[0] );
+	
 	if (!target) {
-		return execute( createNode(NODE_OP, OP_FCALL, node.children[1], node.children[2]) );
+		var fres = execute( createNode(NODE_OP, OP_FCALL, node.children[1], node.children[2]) );
+		return fres;
 	}
 	
 	// The function name can be defined by an expression. Execute it.
@@ -1537,17 +1557,18 @@ function execute( node ) {
 		return;
 	}
 	
-	var ret = 0;
+	var ret = null;
 	
 	if( !node ) {
-		return 0;
+		return null;
 	}
 
 	switch( node.type ) {
 		case NODE_OP:
 			var tmp = ops[node.value](node);
+
 			if (tmp && tmp != 'undefined')
-			ret = tmp;
+				ret = tmp;
 			break;
 			
 		case NODE_VAR:
@@ -1726,6 +1747,7 @@ AttributeDefinition:
 		;
 
 SingleStmt:	Return ';'
+		|	AssignmentStmt ';'
 		|	Expression ';'
 		|	IF Expression SingleStmt	[* %% = createNode( NODE_OP, OP_IF, %2, %3 ); *]
 		|	IF Expression SingleStmt ELSE SingleStmt	
@@ -1734,7 +1756,6 @@ SingleStmt:	Return ';'
 		|	DO SingleStmt WHILE Expression ';'
 										[* %% = createNode( NODE_OP, OP_DO_WHILE, %2, %4 ); *]
 		|	ECHO Expression ';'			[* %% = createNode( NODE_OP, OP_ECHO, %2 ); *]
-		|	AssignmentStmt ';'
 		|	Variable ArrayIndices '=' Expression ';'
 										[* %% = createNode( NODE_OP, OP_ASSIGN_ARR, %1, %2, %4 ); *]
 		|	'{' Stmt '}'				[* %% = %2; *]
@@ -1776,18 +1797,30 @@ AssertStmt:	Identifier String
 FormalParameterList:
 			FormalParameterList ',' Variable
 										[*
-											pstate.curParams[pstate.curParams.length] =
-												createNode( NODE_CONST, %3 );
+											pstate.curParams.push(
+												createNode( NODE_CONST, %3 ));
 										*]
 		|	Variable					[*
-											pstate.curParams[pstate.curParams.length] =
-												createNode( NODE_CONST, %1 );
+											pstate.curParams.push(
+												createNode( NODE_CONST, %1 ));
 										*]
 		|
 		;	
 
-Return:		RETURN Expression			[* %% = createNode( NODE_OP, OP_RETURN, %2 ); *]
-		|	RETURN						[* %% = createNode( NODE_OP, OP_RETURN ); *]
+Return:		RETURN Expression			[*
+											// Create with dummy none node afterwards, so execution
+											// will not halt valid sequence.
+											%% = createNode( NODE_OP, OP_NONE,
+													createNode( NODE_OP, OP_RETURN, %2 ),
+													createNode(NODE_OP, OP_NONE));
+										*]
+		|	RETURN						[*
+											// Create with dummy none node afterwards, so execution
+											// will not halt valid sequence.
+											%% = createNode( NODE_OP, OP_NONE,
+													createNode( NODE_OP, OP_RETURN ),
+													createNode(NODE_OP, OP_NONE));
+										*]
 		;
 
 Target:		Expression
@@ -1894,12 +1927,19 @@ if (!phypeIn || phypeIn == 'undefined') {
 				//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
 				"<?" +
 				"$i = 0;" +
-				"while ($i < 10) {" +
-				"	$test = 'hej'.$i;" +
-				"	$$$test = 'hello world';" +
-				"	$i = $i+1;" +
+				"$j = 0;" +
+				"$k = 0;" +
+				"while ($i < 100) {" +
+				"	while ($j < 100) {" +
+				"		while ($k < 100) {" +
+				"			$arr[$i][$j][$k] = 'hello world';" +
+				"			$i = $i+1;" +
+				"			$j = $j+1;" +
+				"			$k = $k+1;" +
+				"		}" +
+				"	}" +
 				"}" +
-				"echo $hej9;" +
+				"echo $arr[99][99][99];" +
 				"?>"
 			);
 	};
@@ -1948,13 +1988,33 @@ function interpret(str) {
 /////////////
 // PARSING //
 /////////////
-
+/*phypeTestSuite = true;
+var phpScripts =  [];
+var phypeTestDoc = {
+	writeTitle : function(str) {
+		document.write('<td class="scriptTitle">'+str+'</td>\n');
+	},
+	
+	writeExecTime : function(str) {
+		document.write('<td class="execTime">'+str+'</td>\n');
+	},
+	
+	writeStatus : function(statusType, str) {
+		document.write('<td class="'+statusType+'">'+str+'</td>');
+	},
+	
+	write : function(str) {
+		document.write(str);
+	}
+};
+phpScripts[0] = { 'name' : 'test', 'code' : "<? //assertEcho 'hello world' $i = 0;$j = 0;$k = 0;while ($i < 100) { while ($j < 100) { while ($k < 100) { $arr[$i][$j][$k] = 'hello world'; $i = $i+1; $j = $j+1; $k = $k+1; } }}echo $arr[99][99][99];?>" };
+*/
 // If we are not in our test suite, load all the scripts all at once.
 if (!phypeTestSuite && !fromShell) {
 	var str = phypeIn();
-
-	interpret(str);
 	
+	interpret(str);
+
 	if (phypeDoc && phypeDoc.open) {
 		phypeDoc.close();
 	}
@@ -1973,12 +2033,8 @@ else if (phpScripts && !fromShell) {
 	for (var i=0; i<phpScripts.length; i++) {
 		var script = phpScripts[i];
 
-		var error_cnt 	= 0;
-		var error_off	= new Array();
-		var error_la	= new Array();
-		
 		// HACK: It doesn't work unless we parse it once before our actual parse ...
-		if (i>0) __parse( preParse(script.code) );
+		if (i>0) interpret( script.code );
 		resetState();
 		
 		phypeEcho = '';
@@ -1988,15 +2044,9 @@ else if (phpScripts && !fromShell) {
 		var secs = 'Unknown';
 		try {
 			var begin = new Date();
-			var error_cnt = __parse( preParse(script.code), error_off, error_la );
+			interpret(script.code);
 			var end = new Date();
 			secs = ((end.getTime() - begin.getTime())/1000)+" sec";
-			
-			if( error_cnt > 0 ) {
-				for(var i=0; i<error_cnt; i++)
-					throw  "Parse error near >" 
-						+ script.code.substr( error_off[i], 30 ) + "<, expecting \"" + error_la[i].join() + "\"" ;
-			}
 		} catch(exception) {
 			failed = true;
 			thrownException = exception;
@@ -2024,6 +2074,7 @@ else if (phpScripts && !fromShell) {
 					else {
 						phypeTestDoc.writeStatus('pass', OK);
 					}
+					break;
 			}
 			pstate.assertion = null;
 			phypeTestDoc.write('</tr>\n');
@@ -2045,6 +2096,8 @@ log('ObjMapping');
 var_log(pstate.objMapping);
 log('Values');
 var_log(pstate.valTable);
+log('Arrays');
+var_log(pstate.arrTable);
 */
 
 ///////////////
