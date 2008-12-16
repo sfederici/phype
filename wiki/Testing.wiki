@@ -1,7 +1,7 @@
 #summary Tests of Phype.
 #labels Phase-QA
 
-== Table of contents ==
+== !PhypeDoc table of contents ==
   # [PhypeDoc]
   # [ThePhypeProject The Phype Project]
   # [Implementation]
