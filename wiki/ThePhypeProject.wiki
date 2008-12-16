@@ -1,7 +1,7 @@
 #summary Description of the Phype Project.
 #labels Phase-Design
 
-== Table of contents ==
+==!PhypeDoc table of contents ==
   # [PhypeDoc]
   # The Phype Project
   # [Implementation]
