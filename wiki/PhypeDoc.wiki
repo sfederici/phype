@@ -6,7 +6,7 @@ Phype is a project formed in connection with the course [http://www.daimi.au.dk/
 
 !PhypeDoc is the wikified version of this document, and the table of contents can be found below.
 
-== !PhypeDoc Table of contents ==
+== !PhypeDoc table of contents ==
   # !PhypeDoc
   # [ThePhypeProject The Phype Project]
   # [Implementation]
