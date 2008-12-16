@@ -1,7 +1,7 @@
 <?php
 $return = 'var phpScripts = [];
 ';
-chdir('../benchmarks/');
+chdir('../../benchmarks/');
 $filenames = glob('*.phype');
 foreach ($filenames as $filename) {
 	$code = preg_replace('/$/m','\\',file_get_contents($filename));
@@ -10,8 +10,8 @@ foreach ($filenames as $filename) {
 					$filename.'", "'.$code.'");
 ';
 }
-chdir('../v8/');
-$return .= file_get_contents('phypeV8TestLoader.js');
+chdir('../v8/stats/');
+$return .= file_get_contents('phypeV8StatLoader.js');
 
 echo $return;
 ?>

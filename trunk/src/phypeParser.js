@@ -1499,9 +1499,36 @@ ops[OP_ADD] = function(node) {
 ops[OP_SUB] = function(node) {
     var leftChild = execute(node.children[0]);
     var rightChild = execute(node.children[1]);
-    var result = leftChild.value - rightChild.value;
-    var resultNode = createValue(T_CONST, result);
+    var leftValue;
+    var rightValue;
+    var type = T_INT;
+    
+    switch (leftChild.type) {
+        // TODO: Check for PHP-standard.
+        case T_INT:
+        case T_CONST:
+            leftValue = parseInt(leftChild.value);
+            break;
+        case T_FLOAT:
+            leftValue = parseFloat(leftChild.value);
+            type = T_FLOAT;
+            break;
+    }
+    switch (rightChild.type) {
+        // TODO: Check for PHP-standard.
+        case T_INT:
+        case T_CONST:
+            rightValue = parseInt(rightChild.value);
+            break;
+        case T_FLOAT:
+            rightValue = parseFloat(rightChild.value);
+            type = T_FLOAT;
+            break;
+    }
 
+    var result = leftValue - rightValue;
+    var resultNode = createValue(type, result);
+    
     return resultNode;
 };
 
@@ -1509,8 +1536,35 @@ ops[OP_SUB] = function(node) {
 ops[OP_DIV] = function(node) {
     var leftChild = execute(node.children[0]);
     var rightChild = execute(node.children[1]);
-    var result = leftChild.value / rightChild.value;
-    var resultNode = createValue(T_CONST, result);
+    var leftValue;
+    var rightValue;
+    var type = T_INT;
+    
+    switch (leftChild.type) {
+        // TODO: Check for PHP-standard.
+        case T_INT:
+        case T_CONST:
+            leftValue = parseInt(leftChild.value);
+            break;
+        case T_FLOAT:
+            leftValue = parseFloat(leftChild.value);
+            type = T_FLOAT;
+            break;
+    }
+    switch (rightChild.type) {
+        // TODO: Check for PHP-standard.
+        case T_INT:
+        case T_CONST:
+            rightValue = parseInt(rightChild.value);
+            break;
+        case T_FLOAT:
+            rightValue = parseFloat(rightChild.value);
+            type = T_FLOAT;
+            break;
+    }
+
+    var result = leftValue / rightValue;
+    var resultNode = createValue(type, result);
 
     return resultNode;
 };
@@ -1519,9 +1573,36 @@ ops[OP_DIV] = function(node) {
 ops[OP_MUL] = function(node) {
     var leftChild = execute(node.children[0]);
     var rightChild = execute(node.children[1]);
-    var result = leftChild.value * rightChild.value;
-    var resultNode = createValue(T_CONST, result);
+    var leftValue;
+    var rightValue;
+    var type = T_INT;
+    
+    switch (leftChild.type) {
+        // TODO: Check for PHP-standard.
+        case T_INT:
+        case T_CONST:
+            leftValue = parseInt(leftChild.value);
+            break;
+        case T_FLOAT:
+            leftValue = parseFloat(leftChild.value);
+            type = T_FLOAT;
+            break;
+    }
+    switch (rightChild.type) {
+        // TODO: Check for PHP-standard.
+        case T_INT:
+        case T_CONST:
+            rightValue = parseInt(rightChild.value);
+            break;
+        case T_FLOAT:
+            rightValue = parseFloat(rightChild.value);
+            type = T_FLOAT;
+            break;
+    }
 
+    var result = leftValue * rightValue;
+    var resultNode = createValue(type, result);
+    
     return resultNode;
 };
 
@@ -1529,7 +1610,7 @@ ops[OP_MUL] = function(node) {
 ops[OP_NEG] = function(node) {
     var child = execute(node.children[0]);
     var result = -(child.value);
-    var resultNode = createValue(T_CONST, result);
+    var resultNode = createValue(child.type, result);
 
     return resultNode;
 };
@@ -2635,23 +2716,23 @@ var pop_tab = new Array(
     new Array( 70/* ActualParameterList */, 0 ),
     new Array( 64/* ArrayIndices */, 4 ),
     new Array( 64/* ArrayIndices */, 3 ),
-    new Array( 68/* BinaryOp */, 3 ),
-    new Array( 68/* BinaryOp */, 3 ),
-    new Array( 68/* BinaryOp */, 3 ),
-    new Array( 68/* BinaryOp */, 3 ),
-    new Array( 68/* BinaryOp */, 3 ),
-    new Array( 68/* BinaryOp */, 3 ),
-    new Array( 68/* BinaryOp */, 3 ),
-    new Array( 68/* BinaryOp */, 1 ),
+    new Array( 68/* BinaryExp */, 3 ),
+    new Array( 68/* BinaryExp */, 3 ),
+    new Array( 68/* BinaryExp */, 3 ),
+    new Array( 68/* BinaryExp */, 3 ),
+    new Array( 68/* BinaryExp */, 3 ),
+    new Array( 68/* BinaryExp */, 3 ),
+    new Array( 68/* BinaryExp */, 3 ),
+    new Array( 68/* BinaryExp */, 1 ),
     new Array( 74/* AddSubExp */, 3 ),
     new Array( 74/* AddSubExp */, 3 ),
     new Array( 74/* AddSubExp */, 1 ),
     new Array( 75/* MulDivExp */, 3 ),
     new Array( 75/* MulDivExp */, 3 ),
     new Array( 75/* MulDivExp */, 1 ),
-    new Array( 76/* UnaryOp */, 2 ),
-    new Array( 76/* UnaryOp */, 2 ),
-    new Array( 76/* UnaryOp */, 1 ),
+    new Array( 76/* UnaryExp */, 2 ),
+    new Array( 76/* UnaryExp */, 2 ),
+    new Array( 76/* UnaryExp */, 1 ),
     new Array( 77/* Value */, 1 ),
     new Array( 77/* Value */, 1 ),
     new Array( 77/* Value */, 1 ),
@@ -2832,8 +2913,8 @@ var goto_tab = new Array(
     /* State 0 */ new Array( 49/* PHPScript */,1 ),
     /* State 1 */ new Array( 50/* Script */,2 ),
     /* State 2 */ new Array( ),
-    /* State 3 */ new Array( 51/* Stmt */,4 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 4 */ new Array( 51/* Stmt */,40 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 3 */ new Array( 51/* Stmt */,4 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 4 */ new Array( 51/* Stmt */,40 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 5 */ new Array( ),
     /* State 6 */ new Array( ),
     /* State 7 */ new Array( ),
@@ -2842,75 +2923,75 @@ var goto_tab = new Array(
     /* State 10 */ new Array( ),
     /* State 11 */ new Array( ),
     /* State 12 */ new Array( ),
-    /* State 13 */ new Array( 60/* Expression */,55 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 14 */ new Array( 60/* Expression */,58 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 15 */ new Array( 63/* SingleStmt */,59 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 16 */ new Array( 60/* Expression */,60 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 13 */ new Array( 60/* Expression */,55 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 14 */ new Array( 60/* Expression */,58 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 15 */ new Array( 63/* SingleStmt */,59 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 16 */ new Array( 60/* Expression */,60 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 17 */ new Array( 64/* ArrayIndices */,61 ),
-    /* State 18 */ new Array( 51/* Stmt */,64 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 18 */ new Array( 51/* Stmt */,64 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 19 */ new Array( ),
     /* State 20 */ new Array( ),
-    /* State 21 */ new Array( 60/* Expression */,67 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 21 */ new Array( 60/* Expression */,67 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 22 */ new Array( ),
     /* State 23 */ new Array( ),
     /* State 24 */ new Array( ),
     /* State 25 */ new Array( ),
-    /* State 26 */ new Array( 69/* FunctionInvoke */,69 , 60/* Expression */,70 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 27 */ new Array( 60/* Expression */,71 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 28 */ new Array( 70/* ActualParameterList */,72 , 60/* Expression */,73 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 26 */ new Array( 69/* FunctionInvoke */,69 , 60/* Expression */,70 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 27 */ new Array( 60/* Expression */,71 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 28 */ new Array( 70/* ActualParameterList */,72 , 60/* Expression */,73 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 29 */ new Array( ),
     /* State 30 */ new Array( ),
     /* State 31 */ new Array( ),
     /* State 32 */ new Array( ),
     /* State 33 */ new Array( 77/* Value */,79 ),
-    /* State 34 */ new Array( 60/* Expression */,82 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 34 */ new Array( 60/* Expression */,82 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 35 */ new Array( ),
     /* State 36 */ new Array( ),
     /* State 37 */ new Array( ),
     /* State 38 */ new Array( ),
     /* State 39 */ new Array( ),
-    /* State 40 */ new Array( 51/* Stmt */,40 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 40 */ new Array( 51/* Stmt */,40 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 41 */ new Array( ),
     /* State 42 */ new Array( ),
     /* State 43 */ new Array( ),
     /* State 44 */ new Array( ),
     /* State 45 */ new Array( ),
-    /* State 46 */ new Array( 70/* ActualParameterList */,84 , 60/* Expression */,73 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 47 */ new Array( 60/* Expression */,85 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 48 */ new Array( 74/* AddSubExp */,86 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 49 */ new Array( 74/* AddSubExp */,87 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 50 */ new Array( 74/* AddSubExp */,88 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 51 */ new Array( 74/* AddSubExp */,89 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 52 */ new Array( 74/* AddSubExp */,90 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 53 */ new Array( 74/* AddSubExp */,91 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 46 */ new Array( 70/* ActualParameterList */,84 , 60/* Expression */,73 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 47 */ new Array( 60/* Expression */,85 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 48 */ new Array( 74/* AddSubExp */,86 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 49 */ new Array( 74/* AddSubExp */,87 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 50 */ new Array( 74/* AddSubExp */,88 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 51 */ new Array( 74/* AddSubExp */,89 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 52 */ new Array( 74/* AddSubExp */,90 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 53 */ new Array( 74/* AddSubExp */,91 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 54 */ new Array( ),
-    /* State 55 */ new Array( 63/* SingleStmt */,93 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 55 */ new Array( 63/* SingleStmt */,93 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 56 */ new Array( ),
     /* State 57 */ new Array( 64/* ArrayIndices */,94 ),
-    /* State 58 */ new Array( 63/* SingleStmt */,95 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 58 */ new Array( 63/* SingleStmt */,95 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 59 */ new Array( ),
     /* State 60 */ new Array( ),
     /* State 61 */ new Array( ),
-    /* State 62 */ new Array( 60/* Expression */,100 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 63 */ new Array( 60/* Expression */,101 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 64 */ new Array( 51/* Stmt */,40 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 62 */ new Array( 60/* Expression */,100 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 63 */ new Array( 60/* Expression */,101 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 64 */ new Array( 51/* Stmt */,40 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 65 */ new Array( ),
     /* State 66 */ new Array( 58/* FormalParameterList */,104 ),
     /* State 67 */ new Array( ),
-    /* State 68 */ new Array( 67/* AttributeAccess */,106 , 71/* MemberAccess */,107 , 73/* FunctionAccess */,108 , 72/* ExpressionNotFunAccess */,110 , 69/* FunctionInvoke */,28 , 60/* Expression */,70 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 69 */ new Array( 70/* ActualParameterList */,111 , 60/* Expression */,73 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 68 */ new Array( 67/* AttributeAccess */,106 , 71/* MemberAccess */,107 , 73/* FunctionAccess */,108 , 72/* ExpressionNotFunAccess */,110 , 69/* FunctionInvoke */,28 , 60/* Expression */,70 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 69 */ new Array( 70/* ActualParameterList */,111 , 60/* Expression */,73 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 70 */ new Array( ),
     /* State 71 */ new Array( ),
     /* State 72 */ new Array( ),
     /* State 73 */ new Array( ),
-    /* State 74 */ new Array( 75/* MulDivExp */,115 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 75 */ new Array( 75/* MulDivExp */,116 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 74 */ new Array( 75/* MulDivExp */,115 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 75 */ new Array( 75/* MulDivExp */,116 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 76 */ new Array( ),
-    /* State 77 */ new Array( 76/* UnaryOp */,117 , 77/* Value */,35 ),
-    /* State 78 */ new Array( 76/* UnaryOp */,118 , 77/* Value */,35 ),
+    /* State 77 */ new Array( 76/* UnaryExp */,117 , 77/* Value */,35 ),
+    /* State 78 */ new Array( 76/* UnaryExp */,118 , 77/* Value */,35 ),
     /* State 79 */ new Array( ),
     /* State 80 */ new Array( ),
-    /* State 81 */ new Array( 60/* Expression */,119 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 81 */ new Array( 60/* Expression */,119 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 82 */ new Array( ),
     /* State 83 */ new Array( ),
     /* State 84 */ new Array( ),
@@ -2921,14 +3002,14 @@ var goto_tab = new Array(
     /* State 89 */ new Array( ),
     /* State 90 */ new Array( ),
     /* State 91 */ new Array( ),
-    /* State 92 */ new Array( 60/* Expression */,121 , 70/* ActualParameterList */,84 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 92 */ new Array( 60/* Expression */,121 , 70/* ActualParameterList */,84 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 93 */ new Array( ),
     /* State 94 */ new Array( ),
     /* State 95 */ new Array( ),
-    /* State 96 */ new Array( 60/* Expression */,123 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 96 */ new Array( 60/* Expression */,123 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 97 */ new Array( ),
-    /* State 98 */ new Array( 60/* Expression */,124 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 99 */ new Array( 60/* Expression */,125 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 98 */ new Array( 60/* Expression */,124 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 99 */ new Array( 60/* Expression */,125 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 100 */ new Array( ),
     /* State 101 */ new Array( ),
     /* State 102 */ new Array( ),
@@ -2942,7 +3023,7 @@ var goto_tab = new Array(
     /* State 110 */ new Array( ),
     /* State 111 */ new Array( ),
     /* State 112 */ new Array( ),
-    /* State 113 */ new Array( 60/* Expression */,132 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 113 */ new Array( 60/* Expression */,132 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 114 */ new Array( ),
     /* State 115 */ new Array( ),
     /* State 116 */ new Array( ),
@@ -2951,7 +3032,7 @@ var goto_tab = new Array(
     /* State 119 */ new Array( ),
     /* State 120 */ new Array( ),
     /* State 121 */ new Array( ),
-    /* State 122 */ new Array( 63/* SingleStmt */,134 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 122 */ new Array( 63/* SingleStmt */,134 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 123 */ new Array( ),
     /* State 124 */ new Array( ),
     /* State 125 */ new Array( ),
@@ -2959,7 +3040,7 @@ var goto_tab = new Array(
     /* State 127 */ new Array( 55/* ClassFunctionDefinition */,138 , 54/* AttributeDefinition */,139 , 56/* AttributeMod */,141 , 57/* FunctionMod */,142 ),
     /* State 128 */ new Array( ),
     /* State 129 */ new Array( ),
-    /* State 130 */ new Array( 60/* Expression */,148 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 130 */ new Array( 60/* Expression */,148 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 131 */ new Array( ),
     /* State 132 */ new Array( ),
     /* State 133 */ new Array( ),
@@ -2976,21 +3057,21 @@ var goto_tab = new Array(
     /* State 144 */ new Array( ),
     /* State 145 */ new Array( ),
     /* State 146 */ new Array( ),
-    /* State 147 */ new Array( 51/* Stmt */,151 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 147 */ new Array( 51/* Stmt */,151 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 148 */ new Array( ),
     /* State 149 */ new Array( ),
     /* State 150 */ new Array( ),
-    /* State 151 */ new Array( 51/* Stmt */,40 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 151 */ new Array( 51/* Stmt */,40 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 152 */ new Array( ),
-    /* State 153 */ new Array( 60/* Expression */,156 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryOp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 153 */ new Array( 60/* Expression */,156 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 62/* AssignmentStmt */,56 , 68/* BinaryExp */,25 , 66/* Target */,22 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 154 */ new Array( 58/* FormalParameterList */,157 ),
     /* State 155 */ new Array( ),
     /* State 156 */ new Array( ),
     /* State 157 */ new Array( ),
     /* State 158 */ new Array( ),
     /* State 159 */ new Array( ),
-    /* State 160 */ new Array( 51/* Stmt */,161 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
-    /* State 161 */ new Array( 51/* Stmt */,40 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryOp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryOp */,32 , 77/* Value */,35 ),
+    /* State 160 */ new Array( 51/* Stmt */,161 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
+    /* State 161 */ new Array( 51/* Stmt */,40 , 63/* SingleStmt */,5 , 53/* ClassDefinition */,6 , 59/* FunctionDefinition */,7 , 61/* Return */,10 , 62/* AssignmentStmt */,11 , 60/* Expression */,12 , 66/* Target */,22 , 72/* ExpressionNotFunAccess */,23 , 73/* FunctionAccess */,24 , 68/* BinaryExp */,25 , 69/* FunctionInvoke */,28 , 74/* AddSubExp */,29 , 75/* MulDivExp */,31 , 76/* UnaryExp */,32 , 77/* Value */,35 ),
     /* State 162 */ new Array( )
 );
 
@@ -3065,7 +3146,7 @@ var labels = new Array(
     "AssertStmt" /* Non-terminal symbol */,
     "Target" /* Non-terminal symbol */,
     "AttributeAccess" /* Non-terminal symbol */,
-    "BinaryOp" /* Non-terminal symbol */,
+    "BinaryExp" /* Non-terminal symbol */,
     "FunctionInvoke" /* Non-terminal symbol */,
     "ActualParameterList" /* Non-terminal symbol */,
     "MemberAccess" /* Non-terminal symbol */,
@@ -3073,7 +3154,7 @@ var labels = new Array(
     "FunctionAccess" /* Non-terminal symbol */,
     "AddSubExp" /* Non-terminal symbol */,
     "MulDivExp" /* Non-terminal symbol */,
-    "UnaryOp" /* Non-terminal symbol */,
+    "UnaryExp" /* Non-terminal symbol */,
     "Value" /* Non-terminal symbol */,
     "$" /* Terminal symbol */
 );
@@ -3701,7 +3782,7 @@ if (!phypeIn || phypeIn == 'undefined') {
 if (!phypeOut || phypeOut == 'undefined') {
     // Running from V8 or another shell JS-app
     if (typeof(alert) == 'undefined')
-        var phypeOut = print;
+        var phypeOut = function() {};//print;
     else // Running from browser
         var phypeOut = alert;
 }
@@ -3740,27 +3821,7 @@ function interpret(str) {
 /////////////
 // PARSING //
 /////////////
-/*phypeTestSuite = true;
-var phpScripts = [];
-var phypeTestDoc = {
-    writeTitle : function(str) {
-        document.write('<td class="scriptTitle">'+str+'</td>\n');
-    },
-    
-    writeExecTime : function(str) {
-        document.write('<td class="execTime">'+str+'</td>\n');
-    },
-    
-    writeStatus : function(statusType, str) {
-        document.write('<td class="'+statusType+'">'+str+'</td>');
-    },
-    
-    write : function(str) {
-        document.write(str);
-    }
-};
-phpScripts[0] = { 'name' : 'test', 'code' : "<? //assertEcho 'hello world' $i = 0;$j = 0;$k = 0;while ($i < 100) { while ($j < 100) { while ($k < 100) { $arr[$i][$j][$k] = 'hello world'; $i = $i+1; $j = $j+1; $k = $k+1; } }}echo $arr[99][99][99];?>" };
-*/
+
 // If we are not in our test suite, load all the scripts all at once.
 if (!phypeTestSuite && !fromShell) {
     var str = phypeIn();
@@ -3838,19 +3899,6 @@ else if (phpScripts && !fromShell) {
         phypeTestDoc.close();
     }
 }
-
-/*
-log('SymTables');
-var_log(pstate.symTables);
-log('ObjList');
-var_log(pstate.objList);
-log('ObjMapping');
-var_log(pstate.objMapping);
-log('Values');
-var_log(pstate.valTable);
-*/
-log('Arrays');
-var_log(pstate.arrTable);
 
 ///////////////
 // DEBUGGING //
