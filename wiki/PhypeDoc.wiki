@@ -2,7 +2,7 @@
 #labels Phase-Requirements,Featured
 
 = About !PhypeDoc =
-Phype is a project formed in connection with the course [http://www.daimi.au.dk/~amoeller/VM Design of Virtual Machines for Object Oriented Languages] at [http://www.daimi.au.dk DAIMI]. For this project we hand in a report of around 10 pages, containing a description of the project and the implementation, benchmark and footprint numbers, along with the sourcecode.
+Phype is a project formed in connection with the course [http://www.daimi.au.dk/~amoeller/VM Design of Virtual Machines for Object Oriented Languages] at the Faculty of Computer Science at Århus University, also known as [http://www.daimi.au.dk DAIMI]. For this project we hand in a report of around 10 pages, containing a description of the project and the implementation, benchmark and footprint numbers, along with the sourcecode.
 
 !PhypeDoc is the wikified version of this document, and the table of contents can be found below.
 
