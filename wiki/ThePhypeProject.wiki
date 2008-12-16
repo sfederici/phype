@@ -34,7 +34,7 @@ To implement variable scope, we needed an array of variables for each function, 
 For arrays, parsekit would use one opcode per dimension, and a few opcodes for creating the array, using the values saved by the dimensional opcodes. This is when we realized that to properly implement even one-dimensional arrays, we would have to parse the PHP-string once more, and that we would end up implementing a PHP parser before we could start the real business of interpretation. We decided that we would be better off using a parser generator, rather than writing our own parser, and then get started on the interpreter.
 
 ===JS/CC===
-After we dropped parsekit, we looked around for a parsergenerator for JavaScript to help us. Here we found the JS/CC Project. JS/CC is a JavaScript-based parser generator, that creates a LALR(1) parser from a context-free grammar.
+After we dropped parsekit, we looked around for a parsergenerator for !JavaScript to help us. Here we found the JS/CC Project. JS/CC is a !JavaScript-based parser generator, that creates a LALR(1) parser from a context-free grammar.
 
 JS/CC included an example programming language, which included a small set of opcodes and a simple grammar. We took this and altered it significantly, to create a parser that would accomodate our needs for PHP.
 
