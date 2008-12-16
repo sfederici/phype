@@ -19,6 +19,7 @@ foreach ($filenames as $filename) {
 	$res .= 'OK
 ';
 }
+
 echo $res;
 
 function truncate($str, $amount) {
