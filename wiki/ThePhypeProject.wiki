@@ -8,10 +8,10 @@
   # [Testing]
   # [Conclusions]
 
-= The Phype Project =
-Phype is a virtual machine for PHP written in !JavaScript. Using the [http://jscc.jmksf.com/ JSCC] automatic parser generator, and a context free PHP grammar, we create a LALR(1) parser for PHP. This is in turn interpreted by out interpreter, which runs PHP code directly in the browser.
+=The Phype Project=
+Phype is a virtual machine for PHP written in !JavaScript. Using the [http://jscc.jmksf.com/ JS/CC] automatic parser generator, and a context free PHP grammar, we create a LALR(1) parser for PHP. This is in turn interpreted by out interpreter, which runs PHP code directly in the browser.
 
-== First Steps ==
+==First Steps==
 The first plan for Phype was, as the current version, based on !JavaScript and the PHP-extension _parsekit_. Parsekit translates PHP scripts into opcode arrays, containing ZEND opcodes. These opcode arrays were then converted to JSON objects, to enable easier access.
 
 We had a version up and running within the first week, and was able to parse, interpret and run some of the ZEND opcodes, like echoing, assignment and declaration of variables, declaration and calling of functions.
@@ -20,57 +20,55 @@ Unfortunately, the array-form output by parsekit lacks the symbol tables interna
 
 We decided to drop this approach, and go for parsing and interpreting the PHP-code directly.
 
-=== Parsekit ===
+===Parsekit===
 Our initial implementation used a lot of arrays for saving variables, functions and arrays. This implementation worked well initially, but as we got deeper and deeper into PHP, it became obvious that it was not the best way to do it.
 
-As mentioned, parsekit outputs PHP scripts to an array of ZEND opcodes. During this output, parsekit uses a multitude of hidden variables for saving all sorts of data: function names and parameters, array indices, variables, this-calls and more. 
+As mentioned, parsekit outputs PHP scripts to an array of ZEND opcodes. During this output, parsekit uses a multitude of hidden variables for saving all sorts of data: function names and parameters, array indices, variables, this-calls and more. On top of this, parsekit would refer to hidden statetables as well.
 
-These hidden variables, coupled with our array implementation, meant that we ourselves had to implement a lot of hidden variables in these arrays.
+An opcode output by parsekit consists of one opcode which always has three arguments. If an argument is not used, it will contain the value unused. Otherwise an argument can contain either int, string, table-references, direct memory pointers or null. Both the table-references and memory pointers would reference values that were nonaccesable. 
 
-=== JSCC ===
-After we dropped parsekit, we looked around for another tool to help us. Here we found the JSCC Project. JSCC is a !JavaScript-based parser generator, that creates a LALR(1) parser from a context-free grammar.
+For something as simple as variables, parsekit would use some index in a hidden table. Since this table was not available, we would have to parse the entire PHP-string, and use an incrementing counter to get the number of variables. The same was necessary for functions.
 
-JSCC included an example programming language, which included a small set of opcodes and a simple grammar. We took this and altered it significantly, to create a parser that would accomodate our needs.
+To implement variable scope, we needed an array of variables for each function, as well as a global variable array. Another pointer per function was needed for implementing nested function calls, since parsekit would implicitly reference the function table created by the ZEND engine.
 
-The grammar was inspired by [http://www.phpcompiler.org/doc/latest/grammar.html PHC's abstract PHP grammar], but converted into the Bachus-Naur Form that is required for JSCC to read it, as well as rewritten to fit our implementation.
+For arrays, parsekit would use one opcode per dimension, and a few opcodes for creating the array, using the values saved by the dimensional opcodes. This is when we realized that to properly implement even one-dimensional arrays, we would have to parse the PHP-string once more, and that we would end up implementing a PHP parser before we could start the real business of interpretation. We decided that we would be better off using a parser generator, rather than writing our own parser, and then get started on the interpreter.
 
-JSCC gives us all the benefits of a LALR(1) parser, while giving us the possibility to create a grammer that fits our implementation perfectly. This means that our implementation is tailored specifically for PHP, and that the parser runs fast, with a worst case complexity of O(n^3^).
+===JS/CC===
+After we dropped parsekit, we looked around for a parsergenerator for JavaScript to help us. Here we found the JS/CC Project. JS/CC is a JavaScript-based parser generator, that creates a LALR(1) parser from a context-free grammar.
 
-== Planning ==
+JS/CC included an example programming language, which included a small set of opcodes and a simple grammar. We took this and altered it significantly, to create a parser that would accomodate our needs for PHP.
+
+The grammar was inspired by PHC's abstract PHP grammar, but converted into the Bachus-Naur Form that is required for JS/CC to read it, and generate a parser from it, as well as rewritten to fit our implementation.
+
+JS/CC gives us all the benefits of a LALR(1) parser, while giving us the possibility to create a grammer that fits our implementation perfectly. This means that our implementation is tailored specifically for PHP, and that the parser runs reasonably fast, and does not consume huge amounts of memory for the parsetables.
+
+==Planning==
 This is an overview of the goals and progress of the Phype project. These milestones were adapted from the first ZEND incarnation of the project.
 
-At first we need to read PHP-code and parse it, then we will implement the basic PHP functionality first; such as echos and variables, and then extend the interpreter with more advanced features, such as objects and constants. Finally we would add a GC and access to library functions, to make Phype a complete PHP VM.
+At first we need to read PHP-code and parse it. Then we implement the basic PHP functionality; such as echos and variables, and extend the interpreter with more advanced features, such as objects and constants. Finally we would add a GC and access to library functions, to make Phype a complete PHP VM.
 
-=== Milestones ===
+The project has been done with multiple small incremental changes to the codebase, so that we would not implement a large amount of features that did not work, but worked on one feature at a time. This meant that Phype was up and running fast, in both the parsekit and JS/CC versions, and that introduced bugs are easier to find and correct.
+
+===Milestones===
 Below is an itemized list, from start to end, of the project milestones.
- * Reading PHP-code within `<script>`-tags: *Done*.
- * Parsing PHP via LALR(1)-translatable grammar: *Done*.
-   * We are using JSCC for translating our version of a context free PHP grammar into a PHP-parser.
-   * We have found inspiration in PHC's abstract PHP grammar for our context free grammar.
- * Interpreting PHP:
-   * Echoing: *Done*.
-   * Binary and unary operations: *Partially done*.
-     * Multiplication/division and adding/subtracting works with precedence.
-     * Concatenation works.
-   * Type handling: *Partially done*.
-     * Border-line cases has not been tested. There is probably some differences in semantics in border-line cases.
-   * Assigning and reading variables: *Done*.
-     * Global variables can be accessed and declared.
-     * Recursively defined variables ($$a) can be accessed.
-   * Array declaration and access: *Partially done*.
-     * Single and multi-dimensional arrays supported.
-     * Looking up a character in a string using array-notation is not (yet) supported.
-   * Declaring and calling functions: *Done*.
-     * Functions can be declared and called.
-     * Functions can be called recursively ($a()).
-     * Function return halts function-execution and returns correct value.
-   * Variable scope rules: *Done*.
-     * Function-local variables are function-local.
-   * Conditional expressions and loops: *Partially done*.
-     * Boolean expression evaluation.
-     * Branching.
-   * Declaring and accessing objects: *In progress*.
-   * Constant declaration and acces: *Pending*.
-   * Requires and includes: *Pending*.
- * Garbage collection: *Pending*.
- * Library functions: *Pending*.
+ * Reading PHP-code within `<script>`-tags.
+ * Parsing PHP via LALR(1)-translatable grammar.
+ * Interpreting PHP.
+   * Echoing.
+   * Binary and unary operations.
+   * Type handling.
+   * Assigning and reading variables.
+   * Array declaration and access.
+   * Declaring and calling functions.
+   * Variable scope rules.
+   * Conditional expressions and loops.
+   * Declaring and accessing objects.
+   * Constant declaration and acces.
+   * Requires and includes.
+ * Garbage collection.
+ * Library functions.
+
+==Final Status==
+At the conclusion of this course, the Phype interpreter supports most of the general language features of PHP. In this section we will briefly mention which of the PHP language features are supported by Phype, and which that are not. Implementation details are left for subsequent section.
+===Supported Features===
+===Unsupported Features===
