@@ -2087,11 +2087,11 @@ if (!phypeTestSuite && !fromShell) {
 else if (phpScripts && !fromShell) {
 	var phypeTestDoc;
 
-	phypeTestDoc.write('<table class="phypeTest">\n');
+	phypeTestDoc.write('<table style="border-collapse: collapse; border: 1px solid DarkRed; background-color: Bisque;">\n');
 	phypeTestDoc.write('<tr>\n');
-	phypeTestDoc.write('<th>Name of test case</th>\n');
-	phypeTestDoc.write('<th>Exec time</th>\n');
-	phypeTestDoc.write('<th>Status</th>\n');
+	phypeTestDoc.write('<th style="border-collapse: collapse; border: 1px solid DarkRed; background-color: Brown; color: Bisque;">Test case</th>\n');
+	phypeTestDoc.write('<th style="border-collapse: collapse; border: 1px solid DarkRed; background-color: Brown; color: Bisque;">Time</th>\n');
+	phypeTestDoc.write('<th style="border-collapse: collapse; border: 1px solid DarkRed; background-color: Brown; color: Bisque;">Status</th>\n');
 	phypeTestDoc.write('</tr>\n');
 	
 	for (var i=0; i<phpScripts.length; i++) {
@@ -2117,7 +2117,7 @@ else if (phpScripts && !fromShell) {
 		}
 		
 		if (pstate.assertion) {
-			phypeTestDoc.write('<tr>\n');
+			phypeTestDoc.write('<tr style="border-bottom: 1px solid gray;">\n');
 			phypeTestDoc.writeTitle(script.name);
 			phypeTestDoc.writeExecTime(secs);
 			switch (pstate.assertion.type) {
