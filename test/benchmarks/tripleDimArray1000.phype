@@ -3,9 +3,9 @@
 $i = 0;
 $j = 0;
 $k = 0;
-while ($i < 100) {
-	while ($j < 100) {
-		while ($k < 100) {
+while ($i < 1000) {
+	while ($j < 1000) {
+		while ($k < 1000) {
 			$arr[$i][$j][$k] = 'hello world';
 			$i = $i+1;
 			$j = $j+1;
@@ -13,6 +13,6 @@ while ($i < 100) {
 		}
 	}
 }
-echo $arr[99][99][99];
+echo $arr[999][999][999];
 
 ?>

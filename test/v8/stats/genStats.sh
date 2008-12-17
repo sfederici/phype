@@ -1,11 +1,18 @@
 #!/bin/bash
-rm phpOut.txt
+rm scripts.js
+rm stats.txt
 touch scripts.js
-touch phypeOut.txt
-touch phpOut.txt
+touch stats.txt
 
 cat ../../../src/phypeParser.js > scripts.js
 php -f generateStatScript.php >> scripts.js
-../shell scripts.js > phypeOut.txt
 
 php -f phpStat.php
+echo '------------' >> stats.txt
+echo 'PHYPE ON V8' >> stats.txt
+echo '------------' >> stats.txt
+../shell scripts.js >> stats.txt
+echo '------------' >> stats.txt
+echo 'PHYPE ON SM' >> stats.txt
+echo '------------' >> stats.txt
+smjs scripts.js >> stats.txt

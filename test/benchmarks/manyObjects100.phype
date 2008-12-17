@@ -8,12 +8,12 @@ class test100 {
 
 $i = 0;
 $varName = 'test';
-while ($i < 1000) {
+while ($i < 100) {
 	$$varName = '';
 	$varName = 'test'.$i;
 	$$varName = new test100();
 	$i = $i+1;
 }
 
-echo $test999->hi();
+echo $test99->hi();
 ?>
