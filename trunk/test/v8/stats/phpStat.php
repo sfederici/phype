@@ -1,5 +1,4 @@
 <?
-$before = 
 chdir('../../benchmarks/');
 $filenames = glob('*.phype');
 foreach ($filenames as $filename) {
@@ -12,8 +11,12 @@ foreach ($filenames as $filename) {
 	$res .= ' '.number_format($after-$before, 3).'
 ';
 }
+$head = "------------\n";
+$head .= "PHP\n";
+$head .= "------------\n";
+$res = $head.$res;
 chdir('../v8/stats/');
-$fp = fopen('phpOut.txt', 'w');
+$fp = fopen('stats.txt', 'w');
 fwrite($fp, $res);
 fclose($fp);
 
