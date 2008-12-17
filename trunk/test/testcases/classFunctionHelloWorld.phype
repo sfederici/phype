@@ -1,11 +1,11 @@
 <?
 // assertEcho 'hello world'
-class test {
+class bar {
 	function hi() {
 		echo 'hello world';
 	}
 }
 
-$foo = new test();
+$foo = new bar();
 $foo->hi();
 ?>

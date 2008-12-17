@@ -1,0 +1,9 @@
+<?
+// assertEcho '42'
+function get42() {
+	return 42;
+}
+
+$crazy = 1*get42()-(get42()/2)+42-21;
+echo $crazy;
+?>
