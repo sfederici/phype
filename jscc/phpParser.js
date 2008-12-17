@@ -379,7 +379,7 @@ var linker = {
 			return ret;
 		}
 
-		throw varNotFound(varName);
+		//throw varNotFound(varName);
 	},
 	
 	getValueFromObj : function(targetObj, varName, scope) {
@@ -666,9 +666,11 @@ var classLinker = {
 	},
 	
 	decrementObjectRef : function(obj) {
-		obj.references--;
-		if (obj.references <= 0) {
-			classLinker.deleteObject(obj);
+		if (obj) {
+			obj.references--;
+			if (obj.references <= 0) {
+				classLinker.deleteObject(obj);
+			}
 		}
 	},
 	
@@ -678,9 +680,11 @@ var classLinker = {
 		// Remove from object list
 		delete pstate.objList[obj.objListEntry];
 		
+		classDef = pstate.classTable[obj.classDef];
+		
 		// Clear attributes
-		for (var i=0; i<classDef.attrs; i++) {
-			var vName = classDef.attrs[i].member.children[0];
+		for (var attr in classDef.attrs) {
+			var vName = attr;
 			var r = pstate.symTables['.global'][obj.objListEntry+'::'+vName]
 			var refTable = linker.getRefTableByConsDef(r.substring(0,5));
 			delete refTable[r.substring(5,r.length)];
@@ -884,7 +888,7 @@ ops[OP_ASSIGN] = function(node) {
 	// $this cannot be redeclared.
 	if (varName == 'this')
 		throw thisRedeclare();
-		
+
 	// Look up potentially recursive variable name
 	var varName = linker.linkRecursively(node.children[0]);
 
@@ -916,7 +920,7 @@ ops[OP_ASSIGN] = function(node) {
 		}
 	}
 	// If we are assigning an object, increment its reference count.
-	if (oldVal.value != val.value) {
+	if (oldVal && oldVal.value != val.value) {
 		if (oldVal && oldVal.type == T_OBJECT)
 			classLinker.decrementObjectRef(linker.getValue(varName));
 		
@@ -966,7 +970,7 @@ ops[OP_FCALL] = function (node) {
 	// State preservation
 	var prevPassedParams = pstate.passedParams;
 	pstate.passedParams = 0;
-	
+
 	// Check if function name is recursively defined
 	var funName = linker.linkRecursively(node.children[0]);
 	
@@ -1155,7 +1159,7 @@ ops[OP_OBJ_NEW] = function(node) {
 	
 	// Look up class in class table
 	var realClass = pstate.classTable[node.children[0]];
-	if (!realClass || realClass == 'undefined') {
+	if (!realClass || typeof(realClass) == 'undefined') {
 		throw classDefNotFound(node.children[0]);
 	}
 	
@@ -1465,7 +1469,6 @@ ops[OP_ADD] = function(node) {
 	var leftValue;
 	var rightValue;
 	var type = T_INT;
-	
 	switch (leftChild.type) {
 		// TODO: Check for PHP-standard.
 		case T_INT:
@@ -1710,7 +1713,7 @@ function execute( node ) {
 	'\*'
 	'\('
 	'\)'
-	'->'
+	'\->'
 	'::'
 	'//'
 	'\$[\$a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
@@ -1852,12 +1855,12 @@ Stmt:		Stmt Stmt					[* %% = createNode ( NODE_OP, OP_NONE, %1, %2 ); *]
 												%% = createNode( NODE_OP, OP_ECHO, strNode );
 											}
 										*]
-		|	'//' AssertStmt
+		|	'//' AssertStmt				[* %% = %2; *]
 		;
 
 AssignmentStmt:
 			Variable '=' Expression		[* %% = createNode( NODE_OP, OP_ASSIGN, %1, %3 ); *]
-		|	Target '->' AttributeAccess '=' Expression
+		|	LValue '->' AttributeAccess '=' Expression
 										[* %% = createNode( NODE_OP, OP_ATTR_ASSIGN, %1, %3, %5 ); *]
 		;
 
@@ -1904,17 +1907,19 @@ Return:		RETURN Expression			[*
 										*]
 		;
 
-Target:		Expression
-		;
-
 ExpressionNotFunAccess:
-			AssignmentStmt
-		|	BinaryExp
+			BinaryExp
+		|	AssignmentStmt
+		|	AttributeAccess
+		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
 		|	NewToken FunctionInvoke ActualParameterList ')'
 										[* %% = createNode( NODE_OP, OP_OBJ_NEW, %2, %3 ); *]
-		|	Target '->' MemberAccess	[* %3.children[0] = %1; %% = %3; *]
-		|	Variable ArrayIndices		[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
 		|	'(' Expression ')'			[* %% = %2; *]
+		;
+
+LValue:		MemberAccess
+		|	VarVal
+		|	VarVal ArrayIndices			[* %% = createNode( NODE_OP, OP_FETCH_ARR, %1, %2 ); *]
 		;
 		
 Expression:	ExpressionNotFunAccess
@@ -1923,7 +1928,7 @@ Expression:	ExpressionNotFunAccess
 
 FunctionInvoke:
 			Identifier '('				[* %% = %1; *]
-		|	Expression '('				[* %% = %1; *]
+		|	LValue '('					[* %% = %1; *]
 		;
 
 MemberAccess:
@@ -1932,15 +1937,16 @@ MemberAccess:
 		;
 		
 AttributeAccess:
-			Identifier					[* %% = createNode( NODE_OP, OP_OBJ_FETCH, null, %1 ); *]
-		|	ExpressionNotFunAccess		[* %% = createNode( NODE_OP, OP_OBJ_FETCH, null, %1 ); *]
+			LValue '->' Identifier		[* %% = createNode( NODE_OP, OP_OBJ_FETCH, %1, %3 ); *]
+		|	LValue '->' ExpressionNotFunAccess
+										[* %% = createNode( NODE_OP, OP_OBJ_FETCH, %1, %3 ); *]
 		;
 
 FunctionAccess:
-			FunctionInvoke ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, null, %1, %2 ); *]
-		|	Expression '(' ActualParameterList ')'
-										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, null, %1, %3 ); *]
+			LValue '->' FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_OBJ_FCALL, %1, %3, %4 ); *]
+		|	FunctionInvoke ActualParameterList ')'
+										[* %% = createNode( NODE_OP, OP_FCALL, %1, %2 ); *]
 		;
 		
 ActualParameterList:
@@ -1956,23 +1962,26 @@ ArrayIndices:
 		|	'[' Expression ']'			[* %% = %2; *]
 		;
 
-BinaryExp:	Expression '==' AddSubExp	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
-		|	Expression '<' AddSubExp	[* %% = createNode( NODE_OP, OP_LOT, %1, %3 ); *]
-		|	Expression '>' AddSubExp	[* %% = createNode( NODE_OP, OP_GRT, %1, %3 ); *]
-		|	Expression '<=' AddSubExp	[* %% = createNode( NODE_OP, OP_LOE, %1, %3 ); *]
-		|	Expression '>=' AddSubExp	[* %% = createNode( NODE_OP, OP_GRE, %1, %3 ); *]
-		|	Expression '!=' AddSubExp	[* %% = createNode( NODE_OP, OP_NEQ, %1, %3 ); *]
+BinaryExp:	BinaryExp '==' Expression	[* %% = createNode( NODE_OP, OP_EQU, %1, %3 ); *]
+		|	BinaryExp '<' Expression	[* %% = createNode( NODE_OP, OP_LOT, %1, %3 ); *]
+		|	BinaryExp '>' Expression	[* %% = createNode( NODE_OP, OP_GRT, %1, %3 ); *]
+		|	BinaryExp '<=' Expression	[* %% = createNode( NODE_OP, OP_LOE, %1, %3 ); *]
+		|	BinaryExp '>=' Expression	[* %% = createNode( NODE_OP, OP_GRE, %1, %3 ); *]
+		|	BinaryExp '!=' Expression	[* %% = createNode( NODE_OP, OP_NEQ, %1, %3 ); *]
 		|	Expression '.' Expression	[* %% = createNode( NODE_OP, OP_CONCAT, %1, %3 ); *]
+		|	'(' BinaryExp ')'			[* %% = %2; *]
 		|	AddSubExp
 		;
 
 AddSubExp:	AddSubExp '-' MulDivExp		[* %% = createNode( NODE_OP, OP_SUB, %1, %3 ); *]
 		|	AddSubExp '+' MulDivExp		[* %% = createNode( NODE_OP, OP_ADD, %1, %3 ); *]
+		|	'(' AddSubExp ')'			[* %% = %2; *]
 		|	MulDivExp
 		;
 		
 MulDivExp:	MulDivExp '*' UnaryExp		[* %% = createNode( NODE_OP, OP_MUL, %1, %3 ); *]
 		|	MulDivExp '/' UnaryExp		[* %% = createNode( NODE_OP, OP_DIV, %1, %3 ); *]
+		|	'(' MulDivExp ')'			[* %% = %2; *]
 		|	UnaryExp
 		;
 				
@@ -1981,12 +1990,15 @@ UnaryExp:	'-' Value					[* %% = createNode( NODE_OP, OP_NEG, %2 ); *]
 		|	Value
 		;
 
-Value:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
+VarVal:		Variable					[* %% = createNode( NODE_VAR, %1 ); *]
+		;
+
+Value:		VarVal			
 		|	String						[* %% = createNode( NODE_CONST, %1 ); *]
 		|	Integer						[* %% = createNode( NODE_INT, %1 ); *]
 		|	Boolean						[* %% = createNode( NODE_INT, %1 ); *]
 		|	Float						[* %% = createNode( NODE_FLOAT, %1 ); *]
-		|	'(' Expression ')'			[* %% = %2; *]
+		|	LValue
 		;
 
 [*
@@ -2007,20 +2019,11 @@ if (!phypeIn || phypeIn == 'undefined') {
 				//"<? $a=1; $b=2; $c=3; echo 'starting'; if ($a+$b == 3){ $r = $r + 1; if ($c-$b > 0) { $r = $r + 1; if ($c*$b < 7) {	$r = $r + 1; if ($c*$a+$c == 6) { $r = $r + 1; if ($c*$c/$b <= 5) echo $r; }}}} echo 'Done'; echo $r;?>"
 				//"<? $a[0]['d'] = 'hej'; $a[0][1] = '!'; $b = $a; $c = $a; $b[0] = 'verden'; echo $a[0]['d']; echo $b[0]; echo $c[0][1]; echo $c[0]; echo $c; if ($c) { ?>C er sat<? } ?>"
 				"<?" +
-				"$i = 0;" +
-				"$j = 0;" +
-				"$k = 0;" +
-				"while ($i < 100) {" +
-				"	while ($j < 100) {" +
-				"		while ($k < 100) {" +
-				"			$arr[$i][$j][$k] = 'hello world';" +
-				"			$i = $i+1;" +
-				"			$j = $j+1;" +
-				"			$k = $k+1;" +
-				"		}" +
-				"	}" +
+				"function get42() {" +
+				"	return 42;" +
 				"}" +
-				"echo $arr[99][99][99];" +
+				"$crazy = 1*get42()-(get42()/2)+42-21;" +
+				"echo $crazy;" +
 				"?>"
 			);
 	};
