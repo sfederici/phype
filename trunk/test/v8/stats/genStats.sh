@@ -8,6 +8,7 @@ cat ../../../src/phypeParser.js > scripts.js
 php -f generateStatScript.php >> scripts.js
 
 php -f phpStat.php
+echo '' >> stats.txt
 echo '------------' >> stats.txt
 echo 'PHYPE ON V8' >> stats.txt
 echo '------------' >> stats.txt
