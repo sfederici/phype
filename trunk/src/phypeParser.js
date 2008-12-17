@@ -3929,7 +3929,7 @@ else if (phpScripts && !fromShell) {
                     if (thrownException)
                         phypeTestDoc.writeStatus('fail', 'Thrown exception: '+thrownException);
                     else if (phypeEcho != pstate.assertion.value) {
-                        phypeTestDoc.write('Expected output: "'+pstate.assertion.value +
+                        phypeTestDoc.writeStatus('fail', 'Expected output: "'+pstate.assertion.value +
                                             '". Actual output: "'+phypeEcho+'".\n<br/>');
                     } else {
                         phypeTestDoc.writeStatus('pass', 'OK');
