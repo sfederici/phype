@@ -40,15 +40,15 @@ phpScripts = loadPHPScripts();
 // Set our phypeDoc-variable. This should contain the document that phype should output to.
 var phypeTestDoc = {
 	writeTitle : function(str) {
-		document.write('<td class="scriptTitle">'+str+'</td>\n');
+		document.write('<td style="border-collapse: collapse; border: 1px solid DarkRed;">'+str+'</td>\n');
 	},
 	
 	writeExecTime : function(str) {
-		document.write('<td class="execTime">'+str+'</td>\n');
+		document.write('<td style="border-collapse: collapse; border: 1px solid DarkRed;">'+str+'</td>\n');
 	},
 	
 	writeStatus : function(statusType, str) {
-		document.write('<td class="'+statusType+'">'+str+'</td>');
+		document.write('<td style="border-collapse: collapse; border: 1px solid DarkRed;">'+str+'</td>');
 	},
 	
 	write : function(str) {
