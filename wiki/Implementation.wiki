@@ -55,17 +55,11 @@ The latest build from svn, and the zip-file, already include the generated parse
 To build Phype using JS/CC:
 
  # Open the jscc.html file located in the Phype.jscc directory.
-
  # Open the phpParser.js file in the Phype.jscc directory.
-
  # Copy all the code from phpParser.js into the top textfield of the JS/CC Web Environment page.
-
  # Click build. JS/CC will now generate the parser.
-
  # When build is done, click run.
-
  # A dialog containing some code in an input field will appear. Click ok, and say hi to Phype.
-
  # A window will appear containing the generated parser. Copy and paste this into the phypeParser.js file in the Phype.src directory.
 
 ===Running Phype===
