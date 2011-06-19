@@ -15,7 +15,7 @@ As mentioned, Phype uses the JS/CC parser generator, and a context-free PHP gram
 
 The grammar defines a number of tokens based on regular expressions, which are then passed into specific node types depending on how a piece of code matches a regular expression. These nodes are arranged in a parsetree, which we can then run through, and execute on each node. A node will at most have three children in the parsetree.
 
-A node can be one of five types; operation, variable, constant, integer or float. An operation node, called node_op, will contain a value depending on the opcode to execute. There are currently 28 opcodes in Phype. Variable nodes, node_var, can either contain the value assigned to the variable, or a list of recursively linked nodes in the case of recursively defined variables, fx $$a. Constant, integer and float nodes contain the value of the corresponding constant, integer or float in the PHP script.
+A node can be one of five types; operation, variable, constant, integer or float. An operation node, called node_op, will contain a value depending on the opcode to execute. There are currently 28 opcodes in Phype. Variable nodes, node_var, can either contain the value assigned to the variable, or a list of recursively linked nodes in the case of recursively defined variables, e.g. $$a. Constant, integer, and float nodes contain the value of the corresponding constant, integer or float in the PHP script.
 
 When a script ends, the remaining parts of the file will be output as an echo, just as in PHP.
 
